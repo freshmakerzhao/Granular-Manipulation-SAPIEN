@@ -16,6 +16,8 @@ import numpy as np
 import sapien
 from sapien.utils import Viewer
 
+# Initial joint angles from your screenshot (radians): j1..j6
+DEFAULT_INIT_QPOS = np.array([0.0, -1.5708, 1.5708, -1.5708, -1.5708, 0.0], dtype=np.float32)
 
 def create_scene(timestep: float = 1 / 240.0, prefer_gpu: bool = True) -> sapien.Scene:
     """Create a SAPIEN scene and prefer GPU PhysX when available."""
@@ -101,17 +103,30 @@ def print_robot_diagnostics(robot: sapien.physx.PhysxArticulation) -> None:
     print("=======================================\n")
 
 
-def run_viewer(scene: sapien.Scene) -> None:
+def set_initial_joint_pose(robot: sapien.physx.PhysxArticulation, qpos: np.ndarray) -> None:
+    """Apply initial articulation qpos before opening the viewer."""
+    if robot.dof <= 0:
+        return
+    if robot.dof != len(qpos):
+        raise ValueError(
+            f"Initial qpos length mismatch: robot DOF={robot.dof}, provided={len(qpos)}"
+        )
+    robot.set_qpos(qpos.astype(np.float32))
+
+
+def run_viewer(scene: sapien.Scene, start_paused: bool = True) -> None:
     """Open viewer and keep simulation running."""
     viewer = Viewer()
     viewer.set_scene(scene)
     viewer.set_camera_xyz(x=1.8, y=0.0, z=1.1)
     viewer.set_camera_rpy(r=0.0, p=-0.45, y=3.14)
     viewer.window.set_camera_parameters(near=0.01, far=20.0, fovy=np.deg2rad(60.0))
+    viewer.paused = start_paused
 
-    print("[Info] Viewer started. Close the window to exit.")
+    print(f"[Info] Viewer started. paused={viewer.paused}. Close the window to exit.")
     while not viewer.closed:
-        scene.step()
+        if not viewer.paused:
+            scene.step()
         scene.update_render()
         viewer.render()
 
@@ -130,12 +145,18 @@ def main() -> None:
     configure_lighting(scene)
     robot = load_robot(scene, urdf_path)
 
-    # Keep a deterministic zero pose for baseline mapping checks.
-    if robot.dof > 0:
-        robot.set_qpos(np.zeros(robot.dof, dtype=np.float32))
+    # Load your desired startup pose (j1..j6) and open viewer in paused mode.
+    try:
+        # 设置初始位姿
+        set_initial_joint_pose(robot, DEFAULT_INIT_QPOS)
+    except RuntimeError as exc:
+        print(
+            f"[Warn] Failed to set startup qpos ({exc}). "
+            "Try running with --cpu for deterministic initial pose setup."
+        )
 
     print_robot_diagnostics(robot)
-    run_viewer(scene)
+    run_viewer(scene, start_paused=True)
 
 
 if __name__ == "__main__":
