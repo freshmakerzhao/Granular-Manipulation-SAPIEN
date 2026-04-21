@@ -1,0 +1,30 @@
+{
+  "urdf_candidates": {
+    "fairino5_single": [
+      "assets/fairino5/fairino5_v6.urdf",
+      "assets/fairino5_v6.urdf"
+    ],
+    "excavator_simple": [
+      "assets/excavator_simple/excavator.urdf"
+    ],
+    "excavator_full": [
+      "assets/excavator_full/excavator.urdf"
+    ]
+  },
+  "initial_pose": {
+    "fairino5_single": {
+      "default": [0.0, -1.5708, 1.5708, -1.5708, -1.5708, 0.0],
+      "robot_only_env": [0.0, -1.5708, 1.5708, -1.5708, -1.5708, 0.0]
+    },
+    "excavator_simple": {
+      "default": [0.0, 0.0, 0.0, 0.0],
+      "robot_only_env": [0.0, 0.0, 0.0, 0.0],
+      "excavator_pool_env": [0.0, 0.0, 0.0, 0.0]
+    },
+    "excavator_full": {
+      "default": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+      "robot_only_env": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+      "excavator_pool_env": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    }
+  }
+}
