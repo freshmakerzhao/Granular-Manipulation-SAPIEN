@@ -28,10 +28,10 @@ GROUND_HALF_SIZE = (3.2, 2.4)
 PLATFORM_CENTER = (0.35, 0.0)
 PLATFORM_HALF_SIZE = (0.29, 0.23, 0.06)
 POOL_CENTER = (-0.35, 0.0)
-POOL_INNER_HALF_SIZE = (0.34, 0.34)
-POOL_WALL_HEIGHT = 0.154
-POOL_WALL_THICKNESS = 0.019
-POOL_BOTTOM_THICKNESS = 0.022
+POOL_INNER_HALF_SIZE = (0.28, 0.28)
+POOL_WALL_HEIGHT = 0.14
+POOL_WALL_THICKNESS = 0.017
+POOL_BOTTOM_THICKNESS = 0.020
 CAMERA_XYZ = (0.0, -2.2, 1.08)
 CAMERA_RPY = (0.0, -0.24, 0.0)
 
@@ -57,11 +57,22 @@ TOOL_SOLVER_POS_ITERS = 24
 TOOL_SOLVER_VEL_ITERS = 8
 TOOL_MAX_DEPENETRATION_VEL = 0.80
 
+# GPU PhysX memory budget (dense granular contacts need larger patch/contact buffers).
+GPU_MAX_RIGID_CONTACT_COUNT = 1_200_000
+GPU_MAX_RIGID_PATCH_COUNT = 240_000
+
 
 def create_scene(timestep: float = 1 / 240.0, prefer_gpu: bool = True) -> sapien.Scene:
     """Create a SAPIEN scene and prefer GPU PhysX when available."""
     if prefer_gpu:
         try:
+            # SAPIEN 3.x requires explicit GPU enable before creating PhysxGpuSystem.
+            if not sapien.physx.is_gpu_enabled():
+                sapien.physx.enable_gpu()
+            sapien.physx.set_gpu_memory_config(
+                max_rigid_contact_count=GPU_MAX_RIGID_CONTACT_COUNT,
+                max_rigid_patch_count=GPU_MAX_RIGID_PATCH_COUNT,
+            )
             scene = sapien.Scene([sapien.physx.PhysxGpuSystem("cuda"), sapien.render.RenderSystem()])
             print("[Info] Using PhysX GPU system (cuda).")
         except Exception as exc:  # noqa: BLE001
@@ -72,6 +83,17 @@ def create_scene(timestep: float = 1 / 240.0, prefer_gpu: bool = True) -> sapien
 
     scene.set_timestep(timestep)
     return scene
+
+
+def maybe_init_gpu_physx(scene: sapien.Scene) -> None:
+    """Initialize GPU PhysX system when running on GPU backend."""
+    physx_system = scene.physx_system
+    if isinstance(physx_system, sapien.physx.PhysxGpuSystem):
+        try:
+            physx_system.gpu_init()
+            print("[Info] GPU PhysX initialized.")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[Warn] GPU PhysX init failed, simulation may fallback internally: {exc}")
 
 
 def configure_lighting(scene: sapien.Scene, ground_half_size: tuple[float, float] = GROUND_HALF_SIZE) -> None:
@@ -191,7 +213,7 @@ def spawn_particles(
     scene: sapien.Scene,
     center: tuple[float, float] = POOL_CENTER,
     inner_half_size: tuple[float, float] = POOL_INNER_HALF_SIZE,
-    particle_count: int = 4500,
+    particle_count: int = 2600,
     radius: float = 0.008,
 ) -> list[sapien.Entity]:
     """Spawn dynamic particles from near the pool bottom (not from high altitude)."""
@@ -359,14 +381,14 @@ def load_excavator(
     for link in robot.links:
         link.set_max_depenetration_velocity(TOOL_MAX_DEPENETRATION_VEL)
 
-    if init_qpos is not None:
+    is_gpu_backend = isinstance(scene.physx_system, sapien.physx.PhysxGpuSystem)
+    if init_qpos is not None and not is_gpu_backend:
         try:
             set_initial_joint_pose(robot, init_qpos)
         except (RuntimeError, ValueError) as exc:
-            print(
-                f"[Warn] Failed to set startup qpos ({exc}). "
-                "Try running with --cpu for deterministic initial pose setup."
-            )
+            print(f"[Warn] Failed to set startup qpos ({exc}).")
+    elif init_qpos is not None and is_gpu_backend:
+        print("[Info] GPU backend detected: skip set_qpos to avoid slow/invalid host-side articulation write.")
     else:
         print(f"[Info] No initial pose configured for model={equipment_model}, skip set_qpos.")
 
@@ -387,11 +409,23 @@ def run_viewer(
     viewer.set_camera_rpy(r=camera_rpy[0], p=camera_rpy[1], y=camera_rpy[2])
     viewer.window.set_camera_parameters(near=0.01, far=30.0, fovy=np.deg2rad(58.0))
     viewer.paused = start_paused
+    physx_system = scene.physx_system
+    is_gpu_backend = isinstance(physx_system, sapien.physx.PhysxGpuSystem)
+
+    # Ensure initial GPU state is visible to the renderer.
+    if is_gpu_backend:
+        try:
+            physx_system.sync_poses_gpu_to_cpu()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[Warn] Initial GPU pose sync failed: {exc}")
 
     print(f"[Info] Viewer started. paused={viewer.paused}. Close window to exit.")
     while not viewer.closed:
         if not viewer.paused:
             scene.step()
+            if is_gpu_backend:
+                # GPU PhysX needs explicit pose sync for viewport updates.
+                physx_system.sync_poses_gpu_to_cpu()
         scene.update_render()
         viewer.render()
 
@@ -422,7 +456,7 @@ def main() -> None:
         default=str(bootstrap_config_path),
         help="Path to config.json that stores urdf candidates and per-model, per-scene initial poses.",
     )
-    parser.add_argument("--particle-count", type=int, default=4500, help="Number of dynamic particles in the pool.")
+    parser.add_argument("--particle-count", type=int, default=4000, help="Number of dynamic particles in the pool.")
     parser.add_argument("--particle-radius", type=float, default=0.008, help="Particle radius in meters.")
     parser.add_argument("--timestep", type=float, default=1 / 240.0, help="Physics timestep.")
     parser.add_argument("--cpu", action="store_true", help="Force CPU PhysX.")
@@ -468,6 +502,7 @@ def main() -> None:
         init_qpos=init_qpos,
     )
 
+    maybe_init_gpu_physx(scene)
     run_viewer(scene, camera_xyz=CAMERA_XYZ, camera_rpy=CAMERA_RPY, start_paused=True)
 
 
