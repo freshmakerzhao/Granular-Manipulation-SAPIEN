@@ -16,8 +16,12 @@ import numpy as np
 import sapien
 from sapien.utils import Viewer
 
-# Initial joint angles from your screenshot (radians): j1..j6
-DEFAULT_INIT_QPOS = np.array([0.0, -1.5708, 1.5708, -1.5708, -1.5708, 0.0], dtype=np.float32)
+# Per-equipment initial joint angles (radians).
+# If a model key is missing here, we skip initial pose setup for that model.
+INIT_POS_MAP: dict[str, np.ndarray] = {
+    "fairino5_single": np.array([0.0, -1.5708, 1.5708, -1.5708, -1.5708, 0.0], dtype=np.float32),
+    "excavator_simple": np.zeros(15, dtype=np.float32),
+}
 
 def create_scene(timestep: float = 1 / 240.0, prefer_gpu: bool = True) -> sapien.Scene:
     """Create a SAPIEN scene and prefer GPU PhysX when available."""
@@ -43,8 +47,8 @@ def configure_lighting(scene: sapien.Scene) -> None:
     scene.add_ground(altitude=0.0, render_half_size=[1.2, 1.2])
 
 
-def resolve_urdf_path(user_path: str | None) -> Path:
-    """Resolve URDF path from CLI arg or common local defaults."""
+def resolve_urdf_path(equipment_model: str, user_path: str | None) -> Path:
+    """Resolve URDF path from equipment_model, unless explicitly overridden."""
     if user_path:
         p = Path(user_path).expanduser().resolve()
         if not p.is_file():
@@ -52,16 +56,25 @@ def resolve_urdf_path(user_path: str | None) -> Path:
         return p
 
     repo_root = Path(__file__).resolve().parent
-    candidates = [
-        repo_root / "assets" / "fairino5" / "fairino5_v6.urdf",
-        repo_root / "assets" / "fairino5_v6.urdf",
-    ]
+    if equipment_model == "fairino5_single":
+        candidates = [
+            repo_root / "assets" / "fairino5" / "fairino5_v6.urdf",
+            repo_root / "assets" / "fairino5_v6.urdf",
+        ]
+    elif equipment_model == "excavator_simple":
+        candidates = [
+            repo_root / "assets" / "excavator_simple" / "excavator.urdf",
+        ]
+    else:
+        raise ValueError(f"Unsupported equipment_model: {equipment_model}")
+
     for p in candidates:
         if p.is_file():
             return p
 
     raise FileNotFoundError(
-        "No default Fairino URDF found. Tried:\n  - " + "\n  - ".join(str(p) for p in candidates)
+        f"No default URDF found for equipment_model={equipment_model}. Tried:\n  - "
+        + "\n  - ".join(str(p) for p in candidates)
     )
 
 
@@ -132,28 +145,47 @@ def run_viewer(scene: sapien.Scene, start_paused: bool = True) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Load Fairino robot into a minimal SAPIEN 3.0 scene.")
+    parser = argparse.ArgumentParser(description="Load selected equipment model into a minimal SAPIEN 3.0 scene.")
+    parser.add_argument(
+        "equipment_model",
+        nargs="?",
+        default="fairino5_single",
+        choices=["fairino5_single", "excavator_simple"],
+        help="Equipment model preset. You can pass it directly as the first argument.",
+    )
+    parser.add_argument(
+        "--equipment-model",
+        type=str,
+        dest="equipment_model_override",
+        default=None,
+        choices=["fairino5_single", "excavator_simple"],
+        help="Optional override for equipment model preset.",
+    )
     parser.add_argument("--urdf", type=str, default=None, help="Path to URDF. Uses local default if omitted.")
     parser.add_argument("--timestep", type=float, default=1 / 240.0, help="Simulation timestep.")
     parser.add_argument("--cpu", action="store_true", help="Force CPU PhysX.")
     args = parser.parse_args()
 
-    urdf_path = resolve_urdf_path(args.urdf)
+    equipment_model = args.equipment_model_override or args.equipment_model
+    urdf_path = resolve_urdf_path(equipment_model, args.urdf)
+    print(f"[Info] equipment_model={equipment_model}")
     print(f"[Info] Loading URDF: {urdf_path}")
 
     scene = create_scene(timestep=args.timestep, prefer_gpu=not args.cpu)
     configure_lighting(scene)
     robot = load_robot(scene, urdf_path)
 
-    # Load your desired startup pose (j1..j6) and open viewer in paused mode.
-    try:
-        # 设置初始位姿
-        set_initial_joint_pose(robot, DEFAULT_INIT_QPOS)
-    except RuntimeError as exc:
-        print(
-            f"[Warn] Failed to set startup qpos ({exc}). "
-            "Try running with --cpu for deterministic initial pose setup."
-        )
+    init_qpos = INIT_POS_MAP.get(equipment_model)
+    if init_qpos is not None:
+        try:
+            set_initial_joint_pose(robot, init_qpos)
+        except (RuntimeError, ValueError) as exc:
+            print(
+                f"[Warn] Failed to set startup qpos ({exc}). "
+                "Try running with --cpu for deterministic initial pose setup."
+            )
+    else:
+        print(f"[Info] No initial pose configured for equipment_model={equipment_model}, skip set_qpos.")
 
     print_robot_diagnostics(robot)
     run_viewer(scene, start_paused=True)
