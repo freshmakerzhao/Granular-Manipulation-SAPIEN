@@ -13,6 +13,16 @@ import numpy as np
 import sapien
 from sapien.utils import Viewer
 
+# Sand-like contact preset (dry, highly dissipative granular behavior).
+SAND_STATIC_FRICTION = 1.75
+SAND_DYNAMIC_FRICTION = 1.45
+SAND_RESTITUTION = 0.0
+SAND_DENSITY = 1700.0
+SAND_LINEAR_DAMPING = 0.24
+SAND_ANGULAR_DAMPING = 0.30
+SAND_SOLVER_POS_ITERS = 12
+SAND_SOLVER_VEL_ITERS = 4
+
 
 def create_scene(timestep: float = 1 / 240.0, prefer_gpu: bool = True) -> sapien.Scene:
     """Create a SAPIEN 3.0 scene and prefer GPU PhysX when available."""
@@ -46,9 +56,9 @@ def build_sandbox(scene: sapien.Scene) -> sapien.Entity:
 
     # High-friction material for container contact.
     sandbox_physical_material = scene.create_physical_material(
-        static_friction=1.4,
-        dynamic_friction=1.2,
-        restitution=0.02,
+        static_friction=1.90,
+        dynamic_friction=1.60,
+        restitution=0.0,
     )
 
     # Slightly desaturated warm gray-brown for container visuals.
@@ -124,9 +134,9 @@ def spawn_sand_particles(
 
     # Sand-like contact behavior: high friction, very low restitution.
     sand_physical_material = scene.create_physical_material(
-        static_friction=1.3,
-        dynamic_friction=1.1,
-        restitution=0.005,
+        static_friction=SAND_STATIC_FRICTION,
+        dynamic_friction=SAND_DYNAMIC_FRICTION,
+        restitution=SAND_RESTITUTION,
     )
 
     # Brown-yellow, rough, non-metallic appearance.
@@ -141,7 +151,7 @@ def spawn_sand_particles(
     particle_builder.add_sphere_collision(
         radius=particle_radius,
         material=sand_physical_material,
-        density=1600.0,
+        density=SAND_DENSITY,
     )
     particle_builder.add_sphere_visual(
         radius=particle_radius,
@@ -175,10 +185,10 @@ def spawn_sand_particles(
 
         # Per-body damping and solver iterations improve granular stability.
         rigid = particle.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
-        rigid.set_linear_damping(0.08)
-        rigid.set_angular_damping(0.08)
-        rigid.set_solver_position_iterations(8)
-        rigid.set_solver_velocity_iterations(2)
+        rigid.set_linear_damping(SAND_LINEAR_DAMPING)
+        rigid.set_angular_damping(SAND_ANGULAR_DAMPING)
+        rigid.set_solver_position_iterations(SAND_SOLVER_POS_ITERS)
+        rigid.set_solver_velocity_iterations(SAND_SOLVER_VEL_ITERS)
 
         particles.append(particle)
 

@@ -23,6 +23,40 @@ from sapien.utils import Viewer
 SCENE_NAME = "excavator_pool_env"
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "config.json"
 
+# Fixed layout tuned for the dedicated excavator_s010 model.
+GROUND_HALF_SIZE = (3.2, 2.4)
+PLATFORM_CENTER = (0.35, 0.0)
+PLATFORM_HALF_SIZE = (0.29, 0.23, 0.06)
+POOL_CENTER = (-0.35, 0.0)
+POOL_INNER_HALF_SIZE = (0.34, 0.34)
+POOL_WALL_HEIGHT = 0.154
+POOL_WALL_THICKNESS = 0.019
+POOL_BOTTOM_THICKNESS = 0.022
+CAMERA_XYZ = (0.0, -2.2, 1.08)
+CAMERA_RPY = (0.0, -0.24, 0.0)
+
+# Sand-like contact preset (dry, highly dissipative granular behavior).
+SAND_STATIC_FRICTION = 1.75
+SAND_DYNAMIC_FRICTION = 1.45
+SAND_RESTITUTION = 0.0
+SAND_DENSITY = 1700.0
+SAND_LINEAR_DAMPING = 0.24
+SAND_ANGULAR_DAMPING = 0.30
+SAND_SOLVER_POS_ITERS = 12
+SAND_SOLVER_VEL_ITERS = 4
+SAND_MAX_DEPENETRATION_VEL = 0.70
+SAND_MAX_LINEAR_VEL = 1.20
+SAND_MAX_ANGULAR_VEL = 20.0
+SAND_MAX_CONTACT_IMPULSE = 0.015
+
+# Excavator contact preset to avoid aggressive impulses on first contact.
+TOOL_STATIC_FRICTION = 1.60
+TOOL_DYNAMIC_FRICTION = 1.30
+TOOL_RESTITUTION = 0.0
+TOOL_SOLVER_POS_ITERS = 24
+TOOL_SOLVER_VEL_ITERS = 8
+TOOL_MAX_DEPENETRATION_VEL = 0.80
+
 
 def create_scene(timestep: float = 1 / 240.0, prefer_gpu: bool = True) -> sapien.Scene:
     """Create a SAPIEN scene and prefer GPU PhysX when available."""
@@ -40,12 +74,12 @@ def create_scene(timestep: float = 1 / 240.0, prefer_gpu: bool = True) -> sapien
     return scene
 
 
-def configure_lighting(scene: sapien.Scene) -> None:
+def configure_lighting(scene: sapien.Scene, ground_half_size: tuple[float, float] = GROUND_HALF_SIZE) -> None:
     """Set practical lighting for full-scene inspection."""
     scene.set_ambient_light([0.38, 0.38, 0.38])
     scene.add_directional_light(direction=[0.25, -0.35, -1.0], color=[0.95, 0.92, 0.90], shadow=True)
     scene.add_point_light(position=[0.0, 0.0, 2.8], color=[0.45, 0.45, 0.45], shadow=False)
-    scene.add_ground(altitude=0.0, render_half_size=[7.0, 4.0])
+    scene.add_ground(altitude=0.0, render_half_size=list(ground_half_size))
 
 
 def get_urdf_candidates_from_config(config: dict[str, Any], equipment_model: str) -> list[str]:
@@ -85,8 +119,8 @@ def resolve_excavator_urdf_path(
 
 def build_platform(
     scene: sapien.Scene,
-    center: tuple[float, float] = (2.40, 0.0),
-    half_size: tuple[float, float, float] = (0.90, 0.75, 0.20),
+    center: tuple[float, float] = PLATFORM_CENTER,
+    half_size: tuple[float, float, float] = PLATFORM_HALF_SIZE,
 ) -> sapien.Entity:
     """Build a kinematic platform on the right side."""
     platform_material = scene.create_physical_material(static_friction=1.25, dynamic_friction=1.05, restitution=0.02)
@@ -106,14 +140,18 @@ def build_platform(
 
 def build_particle_pool(
     scene: sapien.Scene,
-    center: tuple[float, float] = (-2.00, 0.0),
-    inner_half_size: tuple[float, float] = (0.72, 0.72),
-    wall_height: float = 0.36,
-    wall_thickness: float = 0.04,
-    bottom_thickness: float = 0.05,
+    center: tuple[float, float] = POOL_CENTER,
+    inner_half_size: tuple[float, float] = POOL_INNER_HALF_SIZE,
+    wall_height: float = POOL_WALL_HEIGHT,
+    wall_thickness: float = POOL_WALL_THICKNESS,
+    bottom_thickness: float = POOL_BOTTOM_THICKNESS,
 ) -> sapien.Entity:
     """Build a square pool (bottom + 4 walls) on the left side."""
-    pool_material = scene.create_physical_material(static_friction=1.35, dynamic_friction=1.20, restitution=0.01)
+    pool_material = scene.create_physical_material(
+        static_friction=1.90,
+        dynamic_friction=1.60,
+        restitution=0.0,
+    )
     pool_visual = sapien.render.RenderMaterial(
         base_color=[0.46, 0.56, 0.64, 1.0],
         roughness=0.82,
@@ -151,19 +189,19 @@ def build_particle_pool(
 
 def spawn_particles(
     scene: sapien.Scene,
-    center: tuple[float, float] = (-2.00, 0.0),
-    inner_half_size: tuple[float, float] = (0.72, 0.72),
-    particle_count: int = 2500,
-    radius: float = 0.015,
+    center: tuple[float, float] = POOL_CENTER,
+    inner_half_size: tuple[float, float] = POOL_INNER_HALF_SIZE,
+    particle_count: int = 4500,
+    radius: float = 0.008,
 ) -> list[sapien.Entity]:
-    """Spawn dynamic particles above the left pool and let them settle."""
+    """Spawn dynamic particles from near the pool bottom (not from high altitude)."""
     if particle_count <= 0:
         return []
 
     px, py = center
     ix, iy = inner_half_size
-    margin = 0.07
-    spacing = radius * 2.05
+    margin = max(0.02, 3.0 * radius)
+    spacing = radius * 2.0
 
     nx = max(2, int((2 * (ix - margin)) / spacing))
     ny = max(2, int((2 * (iy - margin)) / spacing))
@@ -171,20 +209,39 @@ def spawn_particles(
 
     x_coords = px + (np.arange(nx, dtype=np.float32) - (nx - 1) / 2.0) * spacing
     y_coords = py + (np.arange(ny, dtype=np.float32) - (ny - 1) / 2.0) * spacing
-    z_start = 0.65
+    # Bottom plate top surface is z=0. Spawn first layer just above bottom.
+    z_start = radius + 0.0015
     z_coords = z_start + np.arange(nz, dtype=np.float32) * spacing
 
-    gx, gy, gz = np.meshgrid(x_coords, y_coords, z_coords, indexing="ij")
-    positions = np.stack([gx, gy, gz], axis=-1).reshape(-1, 3)[:particle_count]
-
     rng = np.random.default_rng(seed=7)
-    positions += rng.uniform(
-        low=-0.08 * radius,
-        high=0.08 * radius,
-        size=positions.shape,
-    ).astype(np.float32)
+    gx, gy, gz = np.meshgrid(x_coords, y_coords, z_coords, indexing="ij")
+    all_positions = np.stack([gx, gy, gz], axis=-1).reshape(-1, 3)
+    total_available = all_positions.shape[0]
 
-    particle_material = scene.create_physical_material(static_friction=1.25, dynamic_friction=1.08, restitution=0.003)
+    # Uniformly sample from the full volume so low-count settings do not only fill one corner.
+    if total_available > particle_count:
+        indices = rng.choice(total_available, size=particle_count, replace=False)
+        positions = all_positions[indices]
+    else:
+        positions = all_positions
+    # XY jitter breaks perfect lattice; Z jitter stays positive to avoid initial floor penetration.
+    xy_jitter = rng.uniform(
+        low=-0.06 * radius,
+        high=0.06 * radius,
+        size=(positions.shape[0], 2),
+    ).astype(np.float32)
+    z_jitter = rng.uniform(
+        low=0.0,
+        high=0.06 * radius,
+        size=(positions.shape[0], 1),
+    ).astype(np.float32)
+    positions += np.concatenate([xy_jitter, z_jitter], axis=1)
+
+    particle_material = scene.create_physical_material(
+        static_friction=SAND_STATIC_FRICTION,
+        dynamic_friction=SAND_DYNAMIC_FRICTION,
+        restitution=SAND_RESTITUTION,
+    )
     particle_visual = sapien.render.RenderMaterial(
         base_color=[0.76, 0.66, 0.42, 1.0],
         roughness=0.95,
@@ -193,7 +250,7 @@ def spawn_particles(
     )
 
     builder = scene.create_actor_builder()
-    builder.add_sphere_collision(radius=radius, material=particle_material, density=1550.0)
+    builder.add_sphere_collision(radius=radius, material=particle_material, density=SAND_DENSITY)
     builder.add_sphere_visual(radius=radius, material=particle_visual)
 
     particles: list[sapien.Entity] = []
@@ -201,10 +258,14 @@ def spawn_particles(
         builder.set_initial_pose(sapien.Pose(p=pos.tolist()))
         particle = builder.build()
         rigid = particle.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
-        rigid.set_linear_damping(0.07)
-        rigid.set_angular_damping(0.07)
-        rigid.set_solver_position_iterations(8)
-        rigid.set_solver_velocity_iterations(2)
+        rigid.set_linear_damping(SAND_LINEAR_DAMPING)
+        rigid.set_angular_damping(SAND_ANGULAR_DAMPING)
+        rigid.set_solver_position_iterations(SAND_SOLVER_POS_ITERS)
+        rigid.set_solver_velocity_iterations(SAND_SOLVER_VEL_ITERS)
+        rigid.set_max_depenetration_velocity(SAND_MAX_DEPENETRATION_VEL)
+        rigid.set_max_linear_velocity(SAND_MAX_LINEAR_VEL)
+        rigid.set_max_angular_velocity(SAND_MAX_ANGULAR_VEL)
+        rigid.set_max_contact_impulse(SAND_MAX_CONTACT_IMPULSE)
         particles.append(particle)
 
     print(f"[Info] Spawned {len(particles)} particles.")
@@ -278,13 +339,12 @@ def load_excavator(
     urdf_path: Path,
     platform_center: tuple[float, float],
     platform_half_height: float,
-    scale: float,
     init_qpos: np.ndarray | None,
 ) -> sapien.physx.PhysxArticulation:
     """Load articulation and place it on the right platform."""
     loader = scene.create_urdf_loader()
     loader.fix_root_link = True
-    loader.scale = float(scale)
+    loader.set_material(TOOL_STATIC_FRICTION, TOOL_DYNAMIC_FRICTION, TOOL_RESTITUTION)
 
     robot = loader.load(str(urdf_path), package_dir=str(urdf_path.parent))
     if robot is None:
@@ -293,6 +353,11 @@ def load_excavator(
     root_pose = sapien.Pose(p=[platform_center[0], platform_center[1], 2.0 * platform_half_height + 0.015])
     root_pose.set_rpy([0.0, 0.0, np.pi])
     robot.set_root_pose(root_pose)
+    robot.set_solver_position_iterations(TOOL_SOLVER_POS_ITERS)
+    robot.set_solver_velocity_iterations(TOOL_SOLVER_VEL_ITERS)
+
+    for link in robot.links:
+        link.set_max_depenetration_velocity(TOOL_MAX_DEPENETRATION_VEL)
 
     if init_qpos is not None:
         try:
@@ -305,21 +370,28 @@ def load_excavator(
     else:
         print(f"[Info] No initial pose configured for model={equipment_model}, skip set_qpos.")
 
-    print(f"[Info] Loaded excavator model={equipment_model} (dof={robot.dof}, scale={scale:.3f})")
+    print(f"[Info] Loaded excavator model={equipment_model} (dof={robot.dof})")
     return robot
 
 
-def run_viewer(scene: sapien.Scene) -> None:
+def run_viewer(
+    scene: sapien.Scene,
+    camera_xyz: tuple[float, float, float] = CAMERA_XYZ,
+    camera_rpy: tuple[float, float, float] = CAMERA_RPY,
+    start_paused: bool = True,
+) -> None:
     """Run the real-time viewer loop."""
     viewer = Viewer()
     viewer.set_scene(scene)
-    viewer.set_camera_xyz(x=0.20, y=-6.00, z=2.25)
-    viewer.set_camera_rpy(r=0.0, p=-0.24, y=0.0)
+    viewer.set_camera_xyz(x=camera_xyz[0], y=camera_xyz[1], z=camera_xyz[2])
+    viewer.set_camera_rpy(r=camera_rpy[0], p=camera_rpy[1], y=camera_rpy[2])
     viewer.window.set_camera_parameters(near=0.01, far=30.0, fovy=np.deg2rad(58.0))
+    viewer.paused = start_paused
 
-    print("[Info] Viewer started. Close window to exit.")
+    print(f"[Info] Viewer started. paused={viewer.paused}. Close window to exit.")
     while not viewer.closed:
-        scene.step()
+        if not viewer.paused:
+            scene.step()
         scene.update_render()
         viewer.render()
 
@@ -328,7 +400,12 @@ def main() -> None:
     bootstrap_config_path = extract_config_path_from_argv(sys.argv[1:], DEFAULT_CONFIG_PATH)
     bootstrap_config = load_pose_config(bootstrap_config_path)
     model_choices = get_available_excavator_models_from_config(bootstrap_config)
-    default_model = "excavator_simple" if "excavator_simple" in model_choices else model_choices[0]
+    if "excavator_s010" in model_choices:
+        default_model = "excavator_s010"
+    elif "excavator_simple" in model_choices:
+        default_model = "excavator_simple"
+    else:
+        default_model = model_choices[0]
 
     parser = argparse.ArgumentParser(description="Excavator + left particle pool environment in SAPIEN 3.0.")
     parser.add_argument(
@@ -345,14 +422,8 @@ def main() -> None:
         default=str(bootstrap_config_path),
         help="Path to config.json that stores urdf candidates and per-model, per-scene initial poses.",
     )
-    parser.add_argument(
-        "--excavator-scale",
-        type=float,
-        default=0.32,
-        help="Global URDF scale for excavator. Reduce if excavator is much larger than pool.",
-    )
-    parser.add_argument("--particle-count", type=int, default=2500, help="Number of dynamic particles in the pool.")
-    parser.add_argument("--particle-radius", type=float, default=0.015, help="Particle radius in meters.")
+    parser.add_argument("--particle-count", type=int, default=4500, help="Number of dynamic particles in the pool.")
+    parser.add_argument("--particle-radius", type=float, default=0.008, help="Particle radius in meters.")
     parser.add_argument("--timestep", type=float, default=1 / 240.0, help="Physics timestep.")
     parser.add_argument("--cpu", action="store_true", help="Force CPU PhysX.")
     args = parser.parse_args()
@@ -360,15 +431,22 @@ def main() -> None:
     pose_config = load_pose_config(config_path)
 
     scene = create_scene(timestep=args.timestep, prefer_gpu=not args.cpu)
-    configure_lighting(scene)
+    configure_lighting(scene, ground_half_size=GROUND_HALF_SIZE)
 
-    platform_center = (1.35, 0.0)
-    platform_half_size = (0.75, 0.65, 0.16)
+    platform_center = PLATFORM_CENTER
+    platform_half_size = PLATFORM_HALF_SIZE
     build_platform(scene, center=platform_center, half_size=platform_half_size)
 
-    pool_center = (-0.40, 0.0)
-    pool_inner_half_size = (0.85, 0.85)
-    build_particle_pool(scene, center=pool_center, inner_half_size=pool_inner_half_size)
+    pool_center = POOL_CENTER
+    pool_inner_half_size = POOL_INNER_HALF_SIZE
+    build_particle_pool(
+        scene,
+        center=pool_center,
+        inner_half_size=pool_inner_half_size,
+        wall_height=POOL_WALL_HEIGHT,
+        wall_thickness=POOL_WALL_THICKNESS,
+        bottom_thickness=POOL_BOTTOM_THICKNESS,
+    )
     spawn_particles(
         scene,
         center=pool_center,
@@ -387,11 +465,10 @@ def main() -> None:
         urdf_path=urdf_path,
         platform_center=platform_center,
         platform_half_height=platform_half_size[2],
-        scale=args.excavator_scale,
         init_qpos=init_qpos,
     )
 
-    run_viewer(scene)
+    run_viewer(scene, camera_xyz=CAMERA_XYZ, camera_rpy=CAMERA_RPY, start_paused=True)
 
 
 if __name__ == "__main__":

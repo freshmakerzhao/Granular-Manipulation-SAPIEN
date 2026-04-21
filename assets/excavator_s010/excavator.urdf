@@ -1,0 +1,145 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="excavator">
+  <link name="base_footprint" />
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint" />
+    <child link="1_base" />
+  </joint>
+  <link name="1_base">
+    <inertial>
+      <origin xyz="-0.0018171 -0.00017721 0.019446" rpy="0 0 0" />
+      <mass value="2.5927" />
+      <inertia ixx="0.010697" ixy="8.5575e-07" ixz="-2.7007e-05" iyy="0.0068973" iyz="1.4558e-07" izz="0.016276" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://excavator_s010/meshes/1_base.STL" scale="0.1 0.1 0.1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://excavator_s010/meshes/1_base.STL" scale="0.1 0.1 0.1" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="2_swing">
+    <inertial>
+      <origin xyz="-0.083549 0.021412 0.058331" rpy="0 0 0" />
+      <mass value="7.7932" />
+      <inertia ixx="0.057296" ixy="-0.014965" ixz="-0.0054949" iyy="0.081603" iyz="-0.005259" izz="0.11992" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://excavator_s010/meshes/2_swing.STL" scale="0.1 0.1 0.1" />
+      </geometry>
+      <material name="">
+        <color rgba="1 0.74902 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://excavator_s010/meshes/2_swing.STL" scale="0.1 0.1 0.1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="j1_swing" type="continuous">
+    <origin xyz="0 0 0.072" rpy="0 0 0" />
+    <parent link="1_base" />
+    <child link="2_swing" />
+    <axis xyz="0 0 -1" />
+  </joint>
+  <link name="3_boom">
+    <inertial>
+      <origin xyz="0.22911 3.7748e-16 0.12825" rpy="0 0 0" />
+      <mass value="1.4408" />
+      <inertia ixx="0.0032125" ixy="5.2749e-18" ixz="-0.0066198" iyy="0.030093" iyz="1.7997e-18" izz="0.027275" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://excavator_s010/meshes/3_boom.STL" scale="0.1 0.1 0.1" />
+      </geometry>
+      <material name="">
+        <color rgba="1 0.49804 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://excavator_s010/meshes/3_boom.STL" scale="0.1 0.1 0.1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="j2_boom" type="revolute">
+    <origin xyz="-0.0009 0 0.10372" rpy="0 0 0" />
+    <parent link="2_swing" />
+    <child link="3_boom" />
+    <axis xyz="0 1 0" />
+    <limit lower="-0.9" upper="0.3" effort="0" velocity="1" />
+  </joint>
+  <link name="6_stick">
+    <inertial>
+      <origin xyz="0.09223 6.2172e-16 0.024134" rpy="0 0 0" />
+      <mass value="0.6004" />
+      <inertia ixx="0.00026656" ixy="-1.7876e-19" ixz="0.00015684" iyy="0.0056447" iyz="4.8971e-19" izz="0.0054568" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://excavator_s010/meshes/6_stick.STL" scale="0.1 0.1 0.1" />
+      </geometry>
+      <material name="">
+        <color rgba="0 0.66667 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://excavator_s010/meshes/6_stick.STL" scale="0.1 0.1 0.1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="j3_stick" type="revolute">
+    <origin xyz="0.54177 0 0.1706" rpy="0 1.2726 0" />
+    <parent link="3_boom" />
+    <child link="6_stick" />
+    <axis xyz="0 1 0" />
+    <limit lower="-0.8" upper="1.0" effort="0" velocity="1" />
+  </joint>
+  <link name="8_bucket">
+    <inertial>
+      <origin xyz="0.072017 3.3307e-16 0.0569" rpy="0 0 0" />
+      <mass value="0.3595" />
+      <inertia ixx="0.00094627" ixy="4.1355e-19" ixz="-4.7801e-05" iyy="0.0013837" iyz="7.1336e-19" izz="0.0016906" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://excavator_s010/meshes/8_bucket.STL" scale="0.1 0.1 0.1" />
+      </geometry>
+      <material name="">
+        <color rgba="0.52941 0.54902 0.54902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://excavator_s010/meshes/8_bucket.STL" scale="0.1 0.1 0.1" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="j4_bucket" type="revolute">
+    <origin xyz="0.29111 0 0.015097" rpy="0 1.4717 0" />
+    <parent link="6_stick" />
+    <child link="8_bucket" />
+    <axis xyz="0 1 0" />
+    <limit lower="-2.1" upper="0.6" effort="0" velocity="1" />
+  </joint>
+</robot>

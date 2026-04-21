@@ -9,6 +9,9 @@
     ],
     "excavator_full": [
       "assets/excavator_full/excavator.urdf"
+    ],
+    "excavator_s010": [
+      "assets/excavator_s010/excavator.urdf"
     ]
   },
   "initial_pose": {
@@ -25,6 +28,11 @@
       "default": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
       "robot_only_env": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
       "excavator_pool_env": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    },
+    "excavator_s010": {
+      "default": [0.0, 0.0, 0.0, 0.0],
+      "robot_only_env": [0.0, 0.0, 0.0, 0.0],
+      "excavator_pool_env": [0.0, 0.0, 0.0, 0.0]
     }
   }
 }
