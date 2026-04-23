@@ -210,6 +210,7 @@ def load_joint_keyframes_json(
     Supported JSON formats:
     1) [{"t": 0, "q": [..]}, ...]
     2) {"keyframes": [{"t": 0, "q": [..]}, ...]}
+    3) 同样支持 `qpos` 字段作为 `q` 的别名（便于直接回放录制文件）
     """
     path = Path(json_path).expanduser().resolve()
     if not path.is_file():
@@ -230,10 +231,13 @@ def load_joint_keyframes_json(
     for i, item in enumerate(raw_frames):
         if not isinstance(item, dict):
             raise ValueError(f"Keyframe #{i} must be an object.")
-        if "t" not in item or "q" not in item:
-            raise ValueError(f"Keyframe #{i} must contain 't' and 'q'.")
+        if "t" not in item:
+            raise ValueError(f"Keyframe #{i} must contain 't'.")
+        q_raw = item.get("q", item.get("qpos"))
+        if q_raw is None:
+            raise ValueError(f"Keyframe #{i} must contain 'q' or 'qpos'.")
         t = int(item["t"])
-        q = np.asarray(item["q"], dtype=np.float32).reshape(-1)
+        q = np.asarray(q_raw, dtype=np.float32).reshape(-1)
         if q.shape[0] != dof:
             raise ValueError(f"Keyframe #{i} dof mismatch: expected {dof}, got {q.shape[0]}")
         q = _clip_to_limits(q, qlimits)

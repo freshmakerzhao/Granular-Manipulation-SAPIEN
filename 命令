@@ -1,0 +1,12 @@
+# 采集（不开碰撞）
+python run_env.py --entry capture --record-file configs/excavator_s010_ee_keyframes.json --keyframe-t-interval 40 --collision off
+
+# 采集（开碰撞）
+python run_env.py --entry capture --record-file configs/excavator_s010_ee_keyframes.json --keyframe-t-interval 40 --collision on
+
+# 回放（不开碰撞）
+python run_env.py --entry scene --mode keyframe --keyframes-json configs/excavator_s010_ee_keyframes.json --cpu
+
+# 回放（开碰撞，且慢放）
+python run_env.py --entry scene --mode keyframe --keyframes-json configs/excavator_s010_ee_keyframes.json --cpu --collision on  --time-scale 3.0
+

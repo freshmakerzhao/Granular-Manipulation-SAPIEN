@@ -20,14 +20,15 @@ import numpy as np
 import sapien
 from sapien.utils import Viewer
 from scripted_policy import (
-    LinearEEKeyframePolicy,
-    build_default_excavator_ee_keyframes,
-    load_ee_keyframes_json,
+    LinearJointKeyframePolicy,
+    build_default_excavator_keyframes,
+    load_joint_keyframes_json,
 )
 
 
 SCENE_NAME = "excavator_pool_env"
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "config.json"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG_PATH = REPO_ROOT / "configs" / "config.json"
 
 # ============================================= 可调参数 ============================================= 
 
@@ -63,32 +64,32 @@ SIM_TIMESTEP = 1 / 240.0  # 物理仿真步长 (s)
 
 
 # ============================================= 颗粒 ============================================= 
-PARTICLE_COUNT = 4000  # 颗粒总数
+PARTICLE_COUNT = 1000  # 颗粒总数
 PARTICLE_RADIUS = 0.008  # 颗粒半径 (m)
 PARTICLE_RENDER_ENABLED = True  # 是否渲染颗粒（仅影响显示，不影响物理）
 
-SAND_STATIC_FRICTION = 1.75  # 颗粒静摩擦系数（越大越不易滑动）
-SAND_DYNAMIC_FRICTION = 1.45  # 颗粒动摩擦系数
+SAND_STATIC_FRICTION = 1.15  # 颗粒静摩擦系数（降低卡死与瞬时冲击）
+SAND_DYNAMIC_FRICTION = 0.95  # 颗粒动摩擦系数（降低铲入时“顶飞”）
 SAND_RESTITUTION = 0.0  # 颗粒弹性系数（0=不回弹）
 SAND_DENSITY = 1700.0  # 颗粒密度 (kg/m^3)
-SAND_LINEAR_DAMPING = 0.24  # 颗粒线速度阻尼（抑制平动抖动）
-SAND_ANGULAR_DAMPING = 0.30  # 颗粒角速度阻尼（抑制旋转抖动）
-SAND_SOLVER_POS_ITERS = 12  # 颗粒接触求解位置迭代次数
-SAND_SOLVER_VEL_ITERS = 4  # 颗粒接触求解速度迭代次数
-SAND_MAX_DEPENETRATION_VEL = 0.70  # 最大去穿透速度限制
-SAND_MAX_LINEAR_VEL = 1.20  # 最大线速度限制
-SAND_MAX_ANGULAR_VEL = 20.0  # 最大角速度限制
-SAND_MAX_CONTACT_IMPULSE = 0.015  # 单次接触冲量上限（降低“弹飞”）
+SAND_LINEAR_DAMPING = 1.20  # 颗粒线速度阻尼（明显抑制“飞粒”）
+SAND_ANGULAR_DAMPING = 1.50  # 颗粒角速度阻尼（减少翻滚抛射）
+SAND_SOLVER_POS_ITERS = 16  # 颗粒接触求解位置迭代次数（提高稳定性）
+SAND_SOLVER_VEL_ITERS = 6  # 颗粒接触求解速度迭代次数
+SAND_MAX_DEPENETRATION_VEL = 0.25  # 最大去穿透速度限制（防止接触瞬间弹飞）
+SAND_MAX_LINEAR_VEL = 0.45  # 最大线速度限制（硬限速）
+SAND_MAX_ANGULAR_VEL = 8.0  # 最大角速度限制（硬限速）
+SAND_MAX_CONTACT_IMPULSE = 0.006  # 单次接触冲量上限（进一步抑制“弹飞”）
 # ============================================= 颗粒 ============================================= 
 
 
 # ============================================= 机械臂 ============================================= 
-TOOL_STATIC_FRICTION = 1.60  # 机械臂/铲斗与环境静摩擦系数
-TOOL_DYNAMIC_FRICTION = 1.30  # 机械臂/铲斗与环境动摩擦系数
+TOOL_STATIC_FRICTION = 1.10  # 机械臂/铲斗与环境静摩擦系数（降低刃口推挤冲击）
+TOOL_DYNAMIC_FRICTION = 0.90  # 机械臂/铲斗与环境动摩擦系数
 TOOL_RESTITUTION = 0.0  # 机械臂/铲斗回弹系数
 TOOL_SOLVER_POS_ITERS = 24  # 机械臂接触求解位置迭代次数
 TOOL_SOLVER_VEL_ITERS = 8  # 机械臂接触求解速度迭代次数
-TOOL_MAX_DEPENETRATION_VEL = 0.80  # 机械臂去穿透速度限制
+TOOL_MAX_DEPENETRATION_VEL = 0.25  # 机械臂去穿透速度限制（降低反冲）
 
 JOINT_DRIVE_STIFFNESS = 900.0  # 关节驱动刚度（CPU 驱动模式）
 JOINT_DRIVE_DAMPING = 120.0  # 关节驱动阻尼（CPU 驱动模式）
@@ -102,14 +103,12 @@ GPU_MAX_RIGID_PATCH_COUNT = 240_000  # GPU 接触 patch 缓冲上限
 # ============================================= 计算 ============================================= 
 
 
-EE_IK_EPS = 1e-4  # IK 收敛阈值
-EE_IK_MAX_ITERS = 120  # IK 最大迭代次数
-EE_IK_DT = 0.08  # IK 内部步长
-EE_IK_DAMP = 1e-4  # IK 阻尼项
-EE_APPLY_MODE = "direct"  # EE-IK 结果应用方式（当前建议保持 direct）
-
 SCRIPTED_TIME_SCALE = 1.0  # 关键帧时间缩放（>1 慢放，<1 快放）
 SCRIPTED_LOOP = False  # 是否循环播放关键帧
+KEYFRAME_REPLAY_APPLY_MODE = "direct"  # 关键帧回放应用方式：direct=直接写 qpos，保证角度可达
+KEYFRAME_DIRECT_MAX_DELTA_RAD = 0.020  # direct 回放单步最大关节变化（抑制“瞬移铲斗”导致飞粒）
+BUCKET_ONLY_PARTICLE_COLLISION = True  # 铲斗仅与粒子碰撞（不与地面/池壁/车体碰撞）
+BUCKET_DISABLE_MESH_COLLISION = True  # 关闭铲斗原始 mesh 碰撞（避免凸包封口，保留 box 内腔碰撞）
 POOL_STATS_TOP_MARGIN = 0.30  # 池内统计时，墙顶向上额外容忍高度（用于容纳堆积）
 POOL_STATS_PRINT_KEY = "p"  # 运行时按该键打印池内质量/体积与一致性对比
 
@@ -180,7 +179,7 @@ def resolve_excavator_urdf_path(
             raise FileNotFoundError(f"URDF file not found: {path}")
         return path
 
-    repo_root = Path(__file__).resolve().parent
+    repo_root = REPO_ROOT
     rel_candidates = get_urdf_candidates_from_config(config, equipment_model)
     for rel in rel_candidates:
         path = (repo_root / rel).resolve()
@@ -582,6 +581,35 @@ def apply_joint_target(
     return True
 
 
+def apply_joint_target_direct(
+    robot: sapien.physx.PhysxArticulation,
+    target_qpos: np.ndarray,
+    physx_system: sapien.physx.PhysxSystem,
+) -> bool:
+    """Directly set articulation qpos to guarantee replay reachability."""
+    target_qpos = np.asarray(target_qpos, dtype=np.float32).reshape(-1)
+    if target_qpos.shape[0] != robot.dof:
+        raise ValueError(f"Target qpos length mismatch: got {target_qpos.shape[0]}, expected {robot.dof}")
+    curr_q = np.asarray(robot.get_qpos(), dtype=np.float32).reshape(-1)
+    max_delta = float(max(1e-6, KEYFRAME_DIRECT_MAX_DELTA_RAD))
+    target_qpos = curr_q + np.clip(target_qpos - curr_q, -max_delta, max_delta)
+    try:
+        robot.set_qpos(target_qpos)
+        try:
+            zero_q = np.zeros_like(target_qpos)
+            robot.set_qvel(zero_q)
+            robot.set_qf(zero_q)
+        except Exception:  # noqa: BLE001
+            pass
+        if isinstance(physx_system, sapien.physx.PhysxGpuSystem):
+            physx_system.gpu_apply_articulation_qpos()
+        for link in robot.links:
+            link.wake_up()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def resolve_ee_link(
     robot: sapien.physx.PhysxArticulation,
     preferred_name: str | None = None,
@@ -604,45 +632,156 @@ def resolve_ee_link(
     return idx, links[idx].name
 
 
-def solve_ee_ik_target_qpos(
+def set_robot_and_particles_collision_enabled(
     robot: sapien.physx.PhysxArticulation,
-    pin_model: sapien.PinocchioModel,
-    ee_link_index: int,
-    target_world_pose: sapien.Pose,
-    qpos_seed: np.ndarray,
-    active_qmask: np.ndarray,
-    eps: float = EE_IK_EPS,
-    max_iterations: int = EE_IK_MAX_ITERS,
-    dt: float = EE_IK_DT,
-    damp: float = EE_IK_DAMP,
-) -> tuple[np.ndarray, bool, float]:
-    """Solve IK for target EE pose in world frame, return qpos in articulation order."""
-    target_local_pose = robot.pose.inv() * target_world_pose
-    q, success, error = pin_model.compute_inverse_kinematics(
-        link_index=ee_link_index,
-        pose=target_local_pose,
-        initial_qpos=np.asarray(qpos_seed, dtype=np.float32).reshape(-1),
-        active_qmask=np.asarray(active_qmask, dtype=np.int32).reshape(-1),
-        eps=float(eps),
-        max_iterations=int(max_iterations),
-        dt=float(dt),
-        damp=float(damp),
+    particles: list[sapien.Entity],
+    enabled: bool,
+) -> None:
+    """Unified collision switch for robot + particles in scene mode."""
+    if enabled:
+        print("[Info] Collision: ON (robot + particles).")
+        return
+
+    changed_shapes = 0
+    for link in robot.links:
+        for shape in link.collision_shapes:
+            shape.set_collision_groups([0, 0, 0, 0])
+            changed_shapes += 1
+    for particle in particles:
+        rigid = particle.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
+        if rigid is None:
+            continue
+        for shape in rigid.collision_shapes:
+            shape.set_collision_groups([0, 0, 0, 0])
+            changed_shapes += 1
+    print(f"[Info] Collision: OFF (robot + particles), disabled_shapes={changed_shapes}.")
+
+
+def configure_bucket_particle_only_collision(
+    robot: sapien.physx.PhysxArticulation,
+    particles: list[sapien.Entity],
+    enabled: bool = BUCKET_ONLY_PARTICLE_COLLISION,
+) -> None:
+    """Configure collision filtering so bucket only collides with particles."""
+    if not enabled:
+        return
+
+    default_layer = 1
+    bucket_layer = 1 << 1
+    particle_layer = 1 << 2
+    bucket_groups = [bucket_layer, particle_layer, 0, 0]
+    particle_groups = [default_layer | particle_layer, default_layer | bucket_layer, 0, 0]
+
+    bucket_links = [link for link in robot.links if "bucket" in link.name.lower()]
+    if not bucket_links:
+        ee_idx, _ = resolve_ee_link(robot, preferred_name=None)
+        bucket_links = [robot.links[ee_idx]]
+
+    bucket_shape_count = 0
+    bucket_mesh_disabled = 0
+    for link in bucket_links:
+        for shape in link.collision_shapes:
+            shape_name = type(shape).__name__.lower()
+            is_mesh_shape = "mesh" in shape_name
+            if BUCKET_DISABLE_MESH_COLLISION and is_mesh_shape:
+                shape.set_collision_groups([0, 0, 0, 0])
+                bucket_mesh_disabled += 1
+                continue
+            shape.set_collision_groups(bucket_groups)
+            bucket_shape_count += 1
+
+    particle_shape_count = 0
+    for particle in particles:
+        rigid = particle.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
+        if rigid is None:
+            continue
+        for shape in rigid.collision_shapes:
+            shape.set_collision_groups(particle_groups)
+            particle_shape_count += 1
+
+    print(
+        "[Info] Collision filter: bucket only interacts with particles "
+        f"(bucket_shapes={bucket_shape_count}, bucket_mesh_disabled={bucket_mesh_disabled}, "
+        f"particle_shapes={particle_shape_count})."
     )
-    q_out = np.asarray(q, dtype=np.float32).reshape(-1)
 
-    # Different pinocchio backends may return scalar/buffer values.
-    success_arr = np.asarray(success).reshape(-1)
-    success_out = bool(success_arr[0]) if success_arr.size > 0 else bool(success)
 
-    error_arr = np.asarray(error, dtype=np.float64).reshape(-1)
-    if error_arr.size == 0:
-        error_out = 0.0
-    elif error_arr.size == 1:
-        error_out = float(error_arr[0])
-    else:
-        error_out = float(np.linalg.norm(error_arr))
+def create_bucket_collision_debug_visuals(
+    scene: sapien.Scene,
+    robot: sapien.physx.PhysxArticulation,
+) -> list[tuple[sapien.Entity, Any, sapien.Pose]]:
+    """Create translucent visuals for bucket box-collision shapes."""
+    bucket_links = [link for link in robot.links if "bucket" in link.name.lower()]
+    if not bucket_links:
+        ee_idx, _ = resolve_ee_link(robot, preferred_name=None)
+        bucket_links = [robot.links[ee_idx]]
 
-    return q_out, success_out, error_out
+    colors = (
+        [0.95, 0.25, 0.25, 0.35],
+        [0.25, 0.85, 0.35, 0.35],
+        [0.25, 0.55, 0.95, 0.35],
+        [0.95, 0.75, 0.25, 0.35],
+    )
+    visuals: list[tuple[sapien.Entity, Any, sapien.Pose]] = []
+    color_idx = 0
+
+    for link in bucket_links:
+        for shape in link.collision_shapes:
+            if not isinstance(shape, sapien.physx.PhysxCollisionShapeBox):
+                continue
+            half_size = np.asarray(shape.half_size, dtype=np.float32).reshape(3).tolist()
+            local_pose = shape.local_pose
+            material = sapien.render.RenderMaterial(
+                base_color=colors[color_idx % len(colors)],
+                roughness=0.2,
+                specular=0.0,
+                metallic=0.0,
+            )
+            color_idx += 1
+
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(
+                pose=sapien.Pose(),
+                half_size=half_size,
+                material=material,
+                name=f"{link.name}_collision_debug_box",
+            )
+            actor = builder.build_kinematic(name=f"{link.name}_collision_debug_box_actor")
+            actor.set_pose(link.entity_pose * local_pose)
+            visuals.append((actor, link, local_pose))
+
+    print(f"[Info] Bucket collision debug visuals enabled: count={len(visuals)}")
+    return visuals
+
+
+def update_bucket_collision_debug_visuals(
+    visuals: list[tuple[sapien.Entity, Any, sapien.Pose]],
+) -> None:
+    """Update debug box actor poses to follow moving bucket link."""
+    for actor, link, local_pose in visuals:
+        actor.set_pose(link.entity_pose * local_pose)
+
+
+def build_joint_policy_from_json(
+    json_path: str | Path,
+    dof: int,
+    qlimits: np.ndarray | None = None,
+    time_scale: float = SCRIPTED_TIME_SCALE,
+    loop: bool = SCRIPTED_LOOP,
+) -> LinearJointKeyframePolicy:
+    """Load q/qpos keyframe JSON and build a joint replay policy."""
+    joint_frames = load_joint_keyframes_json(
+        json_path=json_path,
+        dof=dof,
+        qlimits=qlimits,
+    )
+    return LinearJointKeyframePolicy(
+        keyframes=joint_frames,
+        dof=dof,
+        qlimits=qlimits,
+        time_scale=float(time_scale),
+        loop=bool(loop),
+    )
 
 
 def run_viewer(
@@ -651,11 +790,9 @@ def run_viewer(
     camera_rpy: tuple[float, float, float] = CAMERA_RPY,
     start_paused: bool = True,
     robot: sapien.physx.PhysxArticulation | None = None,
-    ee_scripted_policy: LinearEEKeyframePolicy | None = None,
-    pin_model: sapien.PinocchioModel | None = None,
-    ee_link_index: int | None = None,
-    ee_ik_active_qmask: np.ndarray | None = None,
-    ee_apply_mode: str = "direct",
+    joint_scripted_policy: LinearJointKeyframePolicy | None = None,
+    keyframe_replay_apply_mode: str = KEYFRAME_REPLAY_APPLY_MODE,
+    bucket_collision_debug_visuals: list[tuple[sapien.Entity, Any, sapien.Pose]] | None = None,
     particles: list[sapien.Entity] | None = None,
     source_pool_center: tuple[float, float] = POOL_CENTER,
     source_pool_inner_half_size: tuple[float, float] = POOL_INNER_HALF_SIZE,
@@ -684,8 +821,6 @@ def run_viewer(
 
     sim_step_index = 0
     warned_control_failure = False
-    warned_ik_failure = False
-    qpos_seed: np.ndarray | None = None
     prev_stats_key_down = False
     tracked_particles = particles if particles is not None else []
     init_source_count = (
@@ -698,6 +833,8 @@ def run_viewer(
     if len(tracked_particles) > 0:
         print(f"[Info] Press '{POOL_STATS_PRINT_KEY}' to print source/receiver pool mass-volume statistics.")
     while not viewer.closed:
+        if bucket_collision_debug_visuals:
+            update_bucket_collision_debug_visuals(bucket_collision_debug_visuals)
         stats_key_down = bool(viewer.window.key_down(POOL_STATS_PRINT_KEY))
         if stats_key_down and (not prev_stats_key_down) and len(tracked_particles) > 0:
             source_stats = compute_pool_particle_stats(
@@ -734,55 +871,16 @@ def run_viewer(
         prev_stats_key_down = stats_key_down
 
         if not viewer.paused:
-            if (
-                robot is not None
-                and ee_scripted_policy is not None
-                and pin_model is not None
-                and ee_link_index is not None
-                and ee_ik_active_qmask is not None
-            ):
-                xyz, rpy = ee_scripted_policy.query(sim_step_index)
-                target_world_pose = sapien.Pose(p=xyz.tolist())
-                target_world_pose.set_rpy(rpy.tolist())
-                if qpos_seed is None:
-                    qpos_seed = np.asarray(robot.get_qpos(), dtype=np.float32).reshape(-1)
-                q_ik, ik_success, ik_error = solve_ee_ik_target_qpos(
-                    robot=robot,
-                    pin_model=pin_model,
-                    ee_link_index=ee_link_index,
-                    target_world_pose=target_world_pose,
-                    qpos_seed=qpos_seed,
-                    active_qmask=ee_ik_active_qmask,
-                    eps=EE_IK_EPS,
-                    max_iterations=EE_IK_MAX_ITERS,
-                    dt=EE_IK_DT,
-                    damp=EE_IK_DAMP,
-                )
-                if (not is_gpu_backend) and ee_apply_mode == "direct":
-                    # Deterministic replay path: directly write qpos so motion is always visible.
-                    # This is useful for data collection and validating EE->IK trajectories.
-                    robot.set_qpos(q_ik)
-                    try:
-                        robot.set_qvel(np.zeros_like(q_ik))
-                    except Exception:  # noqa: BLE001
-                        pass
-                    for link in robot.links:
-                        link.wake_up()
-                    ok = True
+            if robot is not None and joint_scripted_policy is not None:
+                q_target = joint_scripted_policy.query(sim_step_index)
+                if keyframe_replay_apply_mode == "direct":
+                    ok = apply_joint_target_direct(robot=robot, target_qpos=q_target, physx_system=physx_system)
                 else:
-                    ok = apply_joint_target(robot=robot, target_qpos=q_ik, physx_system=physx_system)
-                if ok:
-                    qpos_seed = q_ik
-                if (not ik_success) and (not warned_ik_failure):
-                    print(
-                        f"[Warn] IK not fully converged (error={ik_error:.6f}). "
-                        "Trajectory still uses best-effort qpos."
-                    )
-                    warned_ik_failure = True
+                    ok = apply_joint_target(robot=robot, target_qpos=q_target, physx_system=physx_system)
                 if (not ok) and (not warned_control_failure):
                     print(
-                        "[Warn] Keyframe control failed on current backend. "
-                        "Try `--cpu` for stable IK replay."
+                        "[Warn] Joint keyframe control failed on current backend. "
+                        "Try `--cpu` for deterministic replay."
                     )
                     warned_control_failure = True
             scene.step()
@@ -827,10 +925,7 @@ class GranularExcavatorEnv:
         self.robot: sapien.physx.PhysxArticulation | None = None
         self.particles: list[sapien.Entity] = []
         self.source_initial_count: int = 0
-        self.pin_model: sapien.PinocchioModel | None = None
         self.ee_link_index: int | None = None
-        self._ee_qmask: np.ndarray | None = None
-        self._ee_qseed: np.ndarray | None = None
 
     def reset(self) -> collections.OrderedDict[str, Any]:
         """Reset world and return first observation."""
@@ -878,14 +973,12 @@ class GranularExcavatorEnv:
             platform_half_height=PLATFORM_HALF_SIZE[2],
             init_qpos=init_qpos,
         )
+        configure_bucket_particle_only_collision(self.robot, self.particles)
         # Always configure joint drives so external joint_pos action can be directly applied.
         configure_joint_drives(self.robot)
         maybe_init_gpu_physx(self.scene)
 
-        self.pin_model = None
         self.ee_link_index = None
-        self._ee_qmask = None
-        self._ee_qseed = None
         self.scene.update_render()
         return self.get_observation()
 
@@ -893,21 +986,11 @@ class GranularExcavatorEnv:
         if self.scene is None or self.robot is None:
             raise RuntimeError("Environment not initialized. Call reset() first.")
 
-    def _ensure_ee_ik(self) -> None:
-        self._ensure_ready()
-        if self.pin_model is None:
-            self.pin_model = self.robot.create_pinocchio_model()
-            self.ee_link_index, _ = resolve_ee_link(self.robot, preferred_name=None)
-            self._ee_qmask = np.zeros(self.robot.dof, dtype=np.int32)
-            self._ee_qmask[: min(4, self.robot.dof)] = 1
-            self._ee_qseed = np.asarray(self.robot.get_qpos(), dtype=np.float32).reshape(-1)
-
     def apply_action(self, action: np.ndarray | list[float] | dict[str, Any]) -> None:
         """Apply external action without stepping.
 
         Supported:
         - joint action: np.ndarray/list with shape (dof,) or {'joint_pos': ...}
-        - ee action: {'ee_pose': {'xyz': [x,y,z], 'rpy': [r,p,y]}}
         """
         self._ensure_ready()
         assert self.scene is not None and self.robot is not None
@@ -919,36 +1002,7 @@ class GranularExcavatorEnv:
                 if not ok:
                     raise RuntimeError("Failed to apply joint_pos action on current backend.")
                 return
-            if "ee_pose" in action:
-                ee_pose = action["ee_pose"]
-                if not isinstance(ee_pose, dict):
-                    raise ValueError("action['ee_pose'] must be dict with keys xyz and rpy.")
-                xyz = np.asarray(ee_pose["xyz"], dtype=np.float32).reshape(3)
-                rpy = np.asarray(ee_pose["rpy"], dtype=np.float32).reshape(3)
-                self._ensure_ee_ik()
-                assert self.pin_model is not None and self.ee_link_index is not None and self._ee_qmask is not None
-                if self._ee_qseed is None:
-                    self._ee_qseed = np.asarray(self.robot.get_qpos(), dtype=np.float32).reshape(-1)
-                target_world_pose = sapien.Pose(p=xyz.tolist())
-                target_world_pose.set_rpy(rpy.tolist())
-                q_ik, _, _ = solve_ee_ik_target_qpos(
-                    robot=self.robot,
-                    pin_model=self.pin_model,
-                    ee_link_index=self.ee_link_index,
-                    target_world_pose=target_world_pose,
-                    qpos_seed=self._ee_qseed,
-                    active_qmask=self._ee_qmask,
-                    eps=EE_IK_EPS,
-                    max_iterations=EE_IK_MAX_ITERS,
-                    dt=EE_IK_DT,
-                    damp=EE_IK_DAMP,
-                )
-                ok = apply_joint_target(self.robot, q_ik, self.scene.physx_system)
-                if not ok:
-                    raise RuntimeError("Failed to apply IK joint target on current backend.")
-                self._ee_qseed = q_ik
-                return
-            raise ValueError("Unsupported action dict. Use {'joint_pos': ...} or {'ee_pose': {'xyz','rpy'}}")
+            raise ValueError("Unsupported action dict. Use {'joint_pos': ...}.")
 
         joint_target = np.asarray(action, dtype=np.float32).reshape(-1)
         ok = apply_joint_target(self.robot, joint_target, self.scene.physx_system)
@@ -1071,13 +1125,47 @@ def main() -> None:
         type=str,
         choices=("manual", "keyframe"),
         default="manual",
-        help="运行模式：manual=手动调关节，keyframe=按末端关键帧自动运动。",
+        help="运行模式：manual=手动调关节，keyframe=按关节关键帧自动运动。",
     )
     parser.add_argument(
         "--keyframes-json",
         type=str,
         default=None,
-        help="末端关键帧 JSON 路径，仅在 mode=keyframe 时使用。",
+        help="关节关键帧 JSON 路径（支持 q 或 qpos 字段），仅在 mode=keyframe 时使用。",
+    )
+
+    # ==================== debug ==========================
+    parser.add_argument(
+        "--show-bucket-collision-boxes",
+        action="store_true",
+        help="显示铲斗 box 碰撞箱（半透明），用于手动调试碰撞箱大小和位置。",
+    )
+    parser.add_argument(
+        "--collision",
+        type=str,
+        choices=("on", "off"),
+        default="on",
+        help="统一设置回放时粒子与挖掘机碰撞：on=开启，off=关闭。",
+    )
+    parser.add_argument(
+        "--bucket-collision-mode",
+        type=str,
+        choices=("particle-only", "all"),
+        default="particle-only",
+        help="铲斗碰撞模式：particle-only=仅与粒子碰撞，all=与所有物体碰撞。",
+    )
+    parser.add_argument(
+        "--time-scale",
+        type=float,
+        default=SCRIPTED_TIME_SCALE,
+        help="关键帧时间缩放：>1 慢放，<1 快放。",
+    )
+    parser.add_argument(
+        "--replay-apply-mode",
+        type=str,
+        choices=("direct", "drive"),
+        default=KEYFRAME_REPLAY_APPLY_MODE,
+        help="回放关节应用方式：direct=每步直接写qpos，drive=关节驱动跟踪（更物理）。",
     )
     args = parser.parse_args()
     config_path = Path(args.config).expanduser().resolve()
@@ -1133,58 +1221,61 @@ def main() -> None:
         platform_half_height=platform_half_size[2],
         init_qpos=init_qpos,
     )
+    set_robot_and_particles_collision_enabled(robot, particles, enabled=(args.collision == "on"))
+    if args.collision == "on":
+        configure_bucket_particle_only_collision(
+            robot,
+            particles,
+            enabled=(args.bucket_collision_mode == "particle-only"),
+        )
+    bucket_collision_debug_visuals = (
+        create_bucket_collision_debug_visuals(scene, robot)
+        if args.show_bucket_collision_boxes
+        else None
+    )
 
-    ee_scripted_policy: LinearEEKeyframePolicy | None = None
-    pin_model: sapien.PinocchioModel | None = None
-    ee_link_index: int | None = None
-    ee_ik_active_qmask: np.ndarray | None = None
+    joint_scripted_policy: LinearJointKeyframePolicy | None = None
 
     if args.mode == "manual":
         print("[Info] Manual mode: 启动后默认暂停，可在 Viewer 中手动调节关节并控制开始/暂停。")
     elif args.mode == "keyframe":
-        if isinstance(scene.physx_system, sapien.physx.PhysxGpuSystem):
-            print("[Warn] Keyframe IK replay is recommended on CPU for better stability/debuggability.")
-        else:
+        if args.replay_apply_mode != "direct" and not isinstance(scene.physx_system, sapien.physx.PhysxGpuSystem):
             configure_joint_drives(robot)
             print(
                 "[Info] Keyframe control enabled (CPU drive target mode): "
                 f"stiffness={JOINT_DRIVE_STIFFNESS}, damping={JOINT_DRIVE_DAMPING}, "
                 f"force_limit={JOINT_DRIVE_FORCE_LIMIT}"
             )
-            print(f"[Info] EE apply mode (CPU): {EE_APPLY_MODE}")
-
-        ee_link_index, ee_link_name = resolve_ee_link(robot, preferred_name=None)
-        print(f"[Info] EE link for IK: name={ee_link_name}, index={ee_link_index}")
-
-        try:
-            pin_model = robot.create_pinocchio_model()
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(
-                "Failed to create pinocchio model for IK. "
-                "Please ensure SAPIEN pinocchio backend is available."
-            ) from exc
-
-        if args.keyframes_json:
-            ee_keyframes = load_ee_keyframes_json(args.keyframes_json)
-            print(f"[Info] Loaded EE keyframes: {Path(args.keyframes_json).expanduser().resolve()}")
+        elif args.replay_apply_mode == "direct":
+            print("[Info] Keyframe replay mode: direct qpos (always reach target angles).")
         else:
-            ee_pose = robot.links[ee_link_index].entity_pose
-            ee_keyframes = build_default_excavator_ee_keyframes(
-                init_xyz=np.asarray(ee_pose.p, dtype=np.float32).reshape(3),
-                init_rpy=np.asarray(ee_pose.rpy, dtype=np.float32).reshape(3),
+            print("[Info] GPU keyframe replay: using direct set_qpos + gpu_apply_articulation_qpos.")
+        print(f"[Info] Keyframe time scale: {float(args.time_scale):.3f}")
+
+        qlimits = np.asarray(robot.get_qlimits(), dtype=np.float32).reshape(-1, 2)
+        if args.keyframes_json:
+            keyframes_path = Path(args.keyframes_json).expanduser().resolve()
+            joint_scripted_policy = build_joint_policy_from_json(
+                json_path=args.keyframes_json,
+                dof=robot.dof,
+                qlimits=qlimits,
+                time_scale=float(args.time_scale),
+                loop=SCRIPTED_LOOP,
             )
-            print("[Info] Using built-in default EE keyframes.")
-
-        ee_scripted_policy = LinearEEKeyframePolicy(
-            keyframes=ee_keyframes,
-            time_scale=SCRIPTED_TIME_SCALE,
-            loop=SCRIPTED_LOOP,
-        )
-
-        # Keep only first 4 DOFs active for the excavator chain as requested.
-        ee_ik_active_qmask = np.zeros(robot.dof, dtype=np.int32)
-        ee_ik_active_qmask[: min(4, robot.dof)] = 1
-        print(f"[Info] EE IK active DOFs: {int(np.sum(ee_ik_active_qmask))}/{robot.dof}")
+            print(f"[Info] Loaded joint keyframes: {keyframes_path}")
+        else:
+            default_keyframes = build_default_excavator_keyframes(
+                init_qpos=np.asarray(robot.get_qpos(), dtype=np.float32).reshape(-1),
+                qlimits=qlimits,
+            )
+            joint_scripted_policy = LinearJointKeyframePolicy(
+                keyframes=default_keyframes,
+                dof=robot.dof,
+                qlimits=qlimits,
+                time_scale=float(args.time_scale),
+                loop=SCRIPTED_LOOP,
+            )
+            print("[Info] Using built-in default joint keyframes.")
 
     maybe_init_gpu_physx(scene)
     run_viewer(
@@ -1193,11 +1284,9 @@ def main() -> None:
         camera_rpy=CAMERA_RPY,
         start_paused=True,
         robot=robot,
-        ee_scripted_policy=ee_scripted_policy,
-        pin_model=pin_model,
-        ee_link_index=ee_link_index,
-        ee_ik_active_qmask=ee_ik_active_qmask,
-        ee_apply_mode=EE_APPLY_MODE,
+        joint_scripted_policy=joint_scripted_policy,
+        keyframe_replay_apply_mode=args.replay_apply_mode,
+        bucket_collision_debug_visuals=bucket_collision_debug_visuals,
         particles=particles,
         source_pool_center=POOL_CENTER,
         source_pool_inner_half_size=POOL_INNER_HALF_SIZE,

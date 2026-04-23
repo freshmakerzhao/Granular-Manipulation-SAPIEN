@@ -134,6 +134,42 @@
         <mesh filename="package://excavator_s010/meshes/8_bucket.STL" scale="0.1 0.1 0.1" />
       </geometry>
     </collision>
+    <!-- 额外补充 bucket 内腔碰撞体（近似薄壁），用于避免“只有边缘碰撞、内部漏碰撞” -->
+    <!-- 底板（-->
+    <collision>
+      <origin xyz="0.078 0 0.08" rpy="0 0 0" />
+      <geometry>
+        <box size="0.112 0.08 0.008" />
+      </geometry>
+    </collision>
+    <!-- 左侧壁 -->
+    <collision>
+      <origin xyz="0.085 0.047 0.047" rpy="0 0 0" />
+      <geometry>
+        <box size="0.125 0.008 0.052" />
+      </geometry>
+    </collision>
+    <!-- 右侧壁 -->
+    <collision>
+      <origin xyz="0.085 -0.047 0.047" rpy="0 0 0" />
+      <geometry>
+        <box size="0.125 0.008 0.052" />
+      </geometry>
+    </collision>
+    <!-- 后壁 -->
+    <collision>
+      <origin xyz="0.024 0 0.050" rpy="0 0 0" />
+      <geometry>
+        <box size="0.010 0.086 0.060" />
+      </geometry>
+    </collision>
+    <!-- 前沿薄条 -->
+    <collision>
+      <origin xyz="0.14 0 0.050" rpy="0 -0.3 0" />
+      <geometry>
+        <box size="0.010 0.086 0.060" />
+      </geometry>
+    </collision>
   </link>
   <joint name="j4_bucket" type="revolute">
     <origin xyz="0.29111 0 0.015097" rpy="0 1.4717 0" />
