@@ -717,10 +717,11 @@ def create_bucket_collision_debug_visuals(
         bucket_links = [robot.links[ee_idx]]
 
     colors = (
-        [0.95, 0.25, 0.25, 0.35],
-        [0.25, 0.85, 0.35, 0.35],
-        [0.25, 0.55, 0.95, 0.35],
-        [0.95, 0.75, 0.25, 0.35],
+        [0.95, 0.20, 0.20, 0.35],  # 红
+        [0.95, 0.85, 0.20, 0.35],  # 黄
+        [0.20, 0.45, 0.95, 0.35],  # 蓝
+        [0.20, 0.85, 0.30, 0.35],  # 绿
+        [0.95, 0.95, 0.95, 0.35],  # 白
     )
     visuals: list[tuple[sapien.Entity, Any, sapien.Pose]] = []
     color_idx = 0

@@ -8,5 +8,10 @@ python run_env.py --entry capture --record-file configs/excavator_s010_ee_keyfra
 python run_env.py --entry scene --mode keyframe --keyframes-json configs/excavator_s010_ee_keyframes.json --cpu
 
 # 回放（开碰撞，且慢放）
-python run_env.py --entry scene --mode keyframe --keyframes-json configs/excavator_s010_ee_keyframes.json --cpu --collision on  --time-scale 3.0
+python run_env.py --entry scene --mode keyframe --keyframes-json configs/excavator_s010_ee_keyframes.json --cpu --collision on  --time-scale 7.0 --replay-apply-mode drive
+
+# 回放（碰撞，且慢放，显示碰撞箱）
+python run_env.py --entry scene --mode keyframe --keyframes-json configs/excavator_s010_ee_keyframes.json --cpu --collision on  --time-scale 7.0 --replay-apply-mode drive --show-bucket-collision-boxes
+
+
 

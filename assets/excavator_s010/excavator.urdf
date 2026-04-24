@@ -146,14 +146,14 @@
     <collision>
       <origin xyz="0.085 0.047 0.047" rpy="0 0 0" />
       <geometry>
-        <box size="0.125 0.008 0.052" />
+        <box size="0.135 0.008 0.052" />
       </geometry>
     </collision>
     <!-- 右侧壁 -->
     <collision>
       <origin xyz="0.085 -0.047 0.047" rpy="0 0 0" />
       <geometry>
-        <box size="0.125 0.008 0.052" />
+        <box size="0.135 0.008 0.052" />
       </geometry>
     </collision>
     <!-- 后壁 -->
@@ -165,7 +165,7 @@
     </collision>
     <!-- 前沿薄条 -->
     <collision>
-      <origin xyz="0.14 0 0.050" rpy="0 -0.3 0" />
+      <origin xyz="0.15 0 0.050" rpy="0 -0.43 0" />
       <geometry>
         <box size="0.010 0.086 0.060" />
       </geometry>
