@@ -64,22 +64,23 @@ SIM_TIMESTEP = 1 / 240.0  # 物理仿真步长 (s)
 
 
 # ============================================= 颗粒 ============================================= 
-PARTICLE_COUNT = 1000  # 颗粒总数
-PARTICLE_RADIUS = 0.008  # 颗粒半径 (m)
+PARTICLE_COUNT = 2000  # 颗粒总数
+PARTICLE_RADIUS = 0.007  # 颗粒半径 (m)
 PARTICLE_RENDER_ENABLED = True  # 是否渲染颗粒（仅影响显示，不影响物理）
 
-SAND_STATIC_FRICTION = 1.15  # 颗粒静摩擦系数（降低卡死与瞬时冲击）
+SAND_STATIC_FRICTION = 1.15   # 颗粒静摩擦系数（降低卡死与瞬时冲击）
 SAND_DYNAMIC_FRICTION = 0.95  # 颗粒动摩擦系数（降低铲入时“顶飞”）
 SAND_RESTITUTION = 0.0  # 颗粒弹性系数（0=不回弹）
 SAND_DENSITY = 1700.0  # 颗粒密度 (kg/m^3)
-SAND_LINEAR_DAMPING = 1.20  # 颗粒线速度阻尼（明显抑制“飞粒”）
-SAND_ANGULAR_DAMPING = 1.50  # 颗粒角速度阻尼（减少翻滚抛射）
-SAND_SOLVER_POS_ITERS = 16  # 颗粒接触求解位置迭代次数（提高稳定性）
-SAND_SOLVER_VEL_ITERS = 6  # 颗粒接触求解速度迭代次数
-SAND_MAX_DEPENETRATION_VEL = 0.25  # 最大去穿透速度限制（防止接触瞬间弹飞）
-SAND_MAX_LINEAR_VEL = 0.45  # 最大线速度限制（硬限速）
-SAND_MAX_ANGULAR_VEL = 8.0  # 最大角速度限制（硬限速）
-SAND_MAX_CONTACT_IMPULSE = 0.006  # 单次接触冲量上限（进一步抑制“弹飞”）
+SAND_LINEAR_DAMPING = 2.50   # 颗粒线速度阻尼
+SAND_ANGULAR_DAMPING = 5.0  # 颗粒角速度阻尼（减少翻滚抛射）
+SAND_SOLVER_POS_ITERS = 25  # 颗粒接触求解位置迭代次数（提高稳定性）
+SAND_SOLVER_VEL_ITERS = 10  # 颗粒接触求解速度迭代次数
+SAND_MAX_DEPENETRATION_VEL = 0.10  # 最大去穿透速度限制（防止接触瞬间弹飞）
+SAND_MAX_LINEAR_VEL = 1.50  # 最大线速度限制（硬限速）
+SAND_MAX_ANGULAR_VEL = 2.0  # 最大角速度限制（硬限速）
+SAND_MAX_CONTACT_IMPULSE = 0.05  # 单次接触冲量上限（进一步抑制“弹飞”）
+
 # ============================================= 颗粒 ============================================= 
 
 
