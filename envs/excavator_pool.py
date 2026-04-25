@@ -13,11 +13,23 @@ import argparse
 import collections
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
+import time
 from typing import Any
 
 import numpy as np
 import sapien
+try:
+    import cv2
+except Exception:  # noqa: BLE001
+    cv2 = None
+try:
+    from transforms3d.quaternions import axangle2quat as _axangle2quat
+    from transforms3d.quaternions import qmult as _qmult
+except Exception:  # noqa: BLE001
+    _axangle2quat = None
+    _qmult = None
 from sapien.utils import Viewer
 from scripted_policy import (
     LinearJointKeyframePolicy,
@@ -47,24 +59,30 @@ POOL_INNER_HALF_SIZE = (0.28, 0.28)  # 颗粒池内部半尺寸 (x, y)
 POOL_WALL_HEIGHT = 0.14  # 颗粒池墙高 (m)
 POOL_WALL_THICKNESS = 0.017  # 颗粒池墙厚 (m)
 POOL_BOTTOM_THICKNESS = 0.020  # 颗粒池底板半厚度 (m)
+SOURCE_POOL_BASE_COLOR = (0.46, 0.56, 0.64, 0.7)  # 料池颜色+透明度 RGBA（a 越小越透明）
 # ============================================= 料池 ============================================= 
 
 # ============================================= 接料池 ============================================= 
 RECEIVER_POOL_CENTER = (0.4, 0.60)  # 接料池中心
 RECEIVER_POOL_INNER_HALF_SIZE = (0.16, 0.14)  # 接料池内部半尺寸 (x, y)
 RECEIVER_POOL_WALL_HEIGHT = 0.14  # 接料池墙高 (m)
+RECEIVER_POOL_BASE_COLOR = (0.34, 0.62, 0.42, 0.7)   # 接料池颜色+透明度 RGBA（a 越小越透明）
 # ============================================= 接料池 ============================================= 
 
 # ============================================= 相机 ============================================= 
-CAMERA_XYZ = (0.0, -2.2, 1.08)  # Viewer 相机位置 (x, y, z)
-CAMERA_RPY = (0.0, -0.24, 0.0)  # Viewer 相机姿态 (roll, pitch, yaw)
+CAMERA_XYZ = (-0.41492998600006104, 1.4828300476074219, 1.3395099639892578)  # Viewer 相机位置 (x, y, z)
+CAMERA_RPY = (-0.0, -0.6399999856948853, 1.2949999570846558)  # Viewer 相机姿态 (roll, pitch, yaw)
+HEADLESS_CAMERA_RPY = (-0.0, -0.6399999856948853, 1.2949999570846558) # 后台回放离屏相机姿态（确保镜头朝向场景）
+
+HEADLESS_CAMERA_WIDTH = 1280  # 后台回放导出分辨率宽
+HEADLESS_CAMERA_HEIGHT = 720  # 后台回放导出分辨率高
 # ============================================= 相机 ============================================= 
 
 SIM_TIMESTEP = 1 / 240.0  # 物理仿真步长 (s)
 
 
 # ============================================= 颗粒 ============================================= 
-PARTICLE_COUNT = 2000  # 颗粒总数
+PARTICLE_COUNT = 5000  # 颗粒总数
 PARTICLE_RADIUS = 0.007  # 颗粒半径 (m)
 PARTICLE_RENDER_ENABLED = True  # 是否渲染颗粒（仅影响显示，不影响物理）
 
@@ -112,6 +130,15 @@ BUCKET_ONLY_PARTICLE_COLLISION = True  # 铲斗仅与粒子碰撞（不与地面
 BUCKET_DISABLE_MESH_COLLISION = True  # 关闭铲斗原始 mesh 碰撞（避免凸包封口，保留 box 内腔碰撞）
 POOL_STATS_TOP_MARGIN = 0.30  # 池内统计时，墙顶向上额外容忍高度（用于容纳堆积）
 POOL_STATS_PRINT_KEY = "p"  # 运行时按该键打印池内质量/体积与一致性对比
+
+# ============================================= 回放前颗粒稳定等待 =============================================
+SETTLE_PARTICLES_BEFORE_REPLAY = True  # 回放前先等待颗粒稳定，避免“落砂过程”干扰回放
+SETTLE_MIN_STEPS = 120  # 最少先走这么多步再开始判稳（约 0.5 秒）
+SETTLE_MAX_STEPS = 2400  # 最多等待步数（避免极端情况下卡住）
+SETTLE_STABLE_WINDOW_STEPS = 60  # 需要连续满足阈值的步数
+SETTLE_MEAN_SPEED_THRESHOLD = 0.030  # 判稳阈值：颗粒平均线速度上限 (m/s)
+SETTLE_MAX_SPEED_THRESHOLD = 0.120  # 判稳阈值：颗粒最大线速度上限 (m/s)
+# ============================================= 回放前颗粒稳定等待 =============================================
 
 
 def create_scene(timestep: float = 1 / 240.0, prefer_gpu: bool = True) -> sapien.Scene:
@@ -219,7 +246,7 @@ def build_particle_pool(
     wall_height: float = POOL_WALL_HEIGHT,
     wall_thickness: float = POOL_WALL_THICKNESS,
     bottom_thickness: float = POOL_BOTTOM_THICKNESS,
-    base_color: tuple[float, float, float, float] = (0.46, 0.56, 0.64, 1.0),
+    base_color: tuple[float, float, float, float] = SOURCE_POOL_BASE_COLOR,
     name: str = "particle_pool",
 ) -> sapien.Entity:
     """Build a square pool (bottom + 4 walls)."""
@@ -369,6 +396,107 @@ def get_particle_positions(particles: list[sapien.Entity]) -> np.ndarray:
     for i, particle in enumerate(particles):
         pos[i] = np.asarray(particle.pose.p, dtype=np.float32).reshape(3)
     return pos
+
+
+def get_particle_linear_velocities(particles: list[sapien.Entity]) -> np.ndarray:
+    """Return particle linear velocities as (N, 3) array."""
+    if len(particles) == 0:
+        return np.zeros((0, 3), dtype=np.float32)
+
+    vel = np.zeros((len(particles), 3), dtype=np.float32)
+    for i, particle in enumerate(particles):
+        rigid = particle.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
+        if rigid is None:
+            continue
+        try:
+            v = rigid.linear_velocity
+        except Exception:  # noqa: BLE001
+            v = rigid.get_linear_velocity()
+        vel[i] = np.asarray(v, dtype=np.float32).reshape(3)
+    return vel
+
+
+def compute_particle_speed_stats(particles: list[sapien.Entity]) -> dict[str, float]:
+    """Compute particle speed summary for settling checks."""
+    vel = get_particle_linear_velocities(particles)
+    if vel.shape[0] == 0:
+        return {"mean_speed": 0.0, "max_speed": 0.0, "p95_speed": 0.0}
+
+    speed = np.linalg.norm(vel, axis=1)
+    return {
+        "mean_speed": float(np.mean(speed)),
+        "max_speed": float(np.max(speed)),
+        "p95_speed": float(np.percentile(speed, 95.0)),
+    }
+
+
+def settle_particles_before_replay(
+    scene: sapien.Scene,
+    particles: list[sapien.Entity],
+    min_steps: int = SETTLE_MIN_STEPS,
+    max_steps: int = SETTLE_MAX_STEPS,
+    stable_window_steps: int = SETTLE_STABLE_WINDOW_STEPS,
+    mean_speed_threshold: float = SETTLE_MEAN_SPEED_THRESHOLD,
+    max_speed_threshold: float = SETTLE_MAX_SPEED_THRESHOLD,
+) -> None:
+    """Step physics until particle speeds become stable (or timeout)."""
+    if len(particles) == 0:
+        return
+
+    min_steps = max(0, int(min_steps))
+    max_steps = max(min_steps, int(max_steps))
+    stable_window_steps = max(1, int(stable_window_steps))
+    mean_speed_threshold = float(mean_speed_threshold)
+    max_speed_threshold = float(max_speed_threshold)
+
+    physx_system = scene.physx_system
+    is_gpu_backend = isinstance(physx_system, sapien.physx.PhysxGpuSystem)
+    start_ts = time.perf_counter()
+    progress_interval = max(1, int(np.ceil(max_steps / 20.0)))
+
+    stable_count = 0
+    final_stats = compute_particle_speed_stats(particles)
+    for step_idx in range(1, max_steps + 1):
+        scene.step()
+        if is_gpu_backend:
+            physx_system.sync_poses_gpu_to_cpu()
+
+        final_stats = compute_particle_speed_stats(particles)
+        if step_idx < min_steps:
+            continue
+
+        is_stable_now = (
+            final_stats["mean_speed"] <= mean_speed_threshold
+            and final_stats["max_speed"] <= max_speed_threshold
+        )
+        stable_count = (stable_count + 1) if is_stable_now else 0
+        if (step_idx % progress_interval) == 0 or step_idx == min_steps:
+            elapsed = max(1e-6, time.perf_counter() - start_ts)
+            pct = 100.0 * float(step_idx) / float(max_steps)
+            print(
+                "[Info] Settling particles: "
+                f"step={step_idx}/{max_steps} ({pct:.1f}%), "
+                f"mean={final_stats['mean_speed']:.5f}, max={final_stats['max_speed']:.5f}, "
+                f"stable={stable_count}/{stable_window_steps}, elapsed={elapsed:.1f}s"
+            )
+        if stable_count >= stable_window_steps:
+            elapsed = max(1e-6, time.perf_counter() - start_ts)
+            print(
+                "[Info] Particle settle done: "
+                f"steps={step_idx}, mean_speed={final_stats['mean_speed']:.5f}, "
+                f"max_speed={final_stats['max_speed']:.5f}, p95={final_stats['p95_speed']:.5f}, "
+                f"elapsed={elapsed:.1f}s."
+            )
+            return
+
+    elapsed = max(1e-6, time.perf_counter() - start_ts)
+    print(
+        "[Warn] Particle settle reached max steps without full convergence: "
+        f"max_steps={max_steps}, mean_speed={final_stats['mean_speed']:.5f}, "
+        f"max_speed={final_stats['max_speed']:.5f}, p95={final_stats['p95_speed']:.5f}, "
+        f"elapsed={elapsed:.1f}s. "
+        "Replay will still start."
+    )
 
 
 def compute_pool_particle_stats(
@@ -894,6 +1022,160 @@ def run_viewer(
         viewer.render()
 
 
+def _capture_camera_rgb_uint8(camera: Any) -> np.ndarray:
+    """Capture one RGB frame from a render camera and convert to uint8."""
+    camera.take_picture()
+    color = camera.get_picture("Color")
+    rgb = np.clip(np.asarray(color[..., :3], dtype=np.float32), 0.0, 1.0)
+    return (rgb * 255.0).astype(np.uint8)
+
+
+def _viewer_rpy_to_quaternion(rpy: tuple[float, float, float] | np.ndarray) -> np.ndarray:
+    """Convert Viewer-style (roll, pitch, yaw) to camera quaternion.
+
+    This matches SAPIEN FPSCameraController update() convention:
+    q = qmult(qmult(aa(up, -yaw), aa(left, -pitch)), aa(forward, roll))
+    """
+    r, p, y = [float(x) for x in np.asarray(rpy, dtype=np.float64).reshape(3)]
+    if _axangle2quat is None or _qmult is None:
+        # Fallback: keep previous behavior when transforms3d is unavailable.
+        pose = sapien.Pose()
+        pose.set_rpy([r, p, y])
+        return np.asarray(pose.q, dtype=np.float32).reshape(4)
+
+    forward = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    up = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    left = np.cross(up, forward)
+    q = _qmult(_qmult(_axangle2quat(up, -y), _axangle2quat(left, -p)), _axangle2quat(forward, r))
+    return np.asarray(q, dtype=np.float32).reshape(4)
+
+
+def run_headless_keyframe_replay(
+    scene: sapien.Scene,
+    robot: sapien.physx.PhysxArticulation,
+    joint_scripted_policy: LinearJointKeyframePolicy,
+    keyframe_replay_apply_mode: str,
+    output_dir: Path,
+    frame_interval_steps: int = 1,
+    video_fps: float = 30.0,
+    camera_xyz: tuple[float, float, float] = CAMERA_XYZ,
+    camera_rpy: tuple[float, float, float] = HEADLESS_CAMERA_RPY,
+    camera_width: int = HEADLESS_CAMERA_WIDTH,
+    camera_height: int = HEADLESS_CAMERA_HEIGHT,
+    total_steps: int | None = None,
+) -> None:
+    """Replay keyframes without UI and export frames + video."""
+    if cv2 is None:
+        raise RuntimeError("OpenCV (cv2) is required for headless replay export.")
+
+    output_dir = output_dir.expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    frame_interval_steps = max(1, int(frame_interval_steps))
+    video_fps = max(1e-6, float(video_fps))
+    camera_width = max(64, int(camera_width))
+    camera_height = max(64, int(camera_height))
+
+    camera = scene.add_camera(
+        name="headless_replay_camera",
+        width=camera_width,
+        height=camera_height,
+        fovy=np.deg2rad(58.0),
+        near=0.01,
+        far=30.0,
+    )
+    cam_q = _viewer_rpy_to_quaternion(camera_rpy)
+    cam_pose = sapien.Pose(p=list(camera_xyz), q=cam_q.tolist())
+    camera.set_entity_pose(cam_pose)
+
+    physx_system = scene.physx_system
+    is_gpu_backend = isinstance(physx_system, sapien.physx.PhysxGpuSystem)
+
+    if total_steps is None:
+        total_steps = max(1, int(np.ceil(joint_scripted_policy.period)) + 1)
+    else:
+        total_steps = max(1, int(total_steps))
+    print(
+        "[Info] Headless replay started: "
+        f"steps={total_steps}, frame_interval={frame_interval_steps}, "
+        f"size={camera_width}x{camera_height}, fps={video_fps:.3f}"
+    )
+    start_ts = time.perf_counter()
+    progress_interval = max(1, int(np.ceil(total_steps / 20.0)))
+
+    video_path = output_dir / "replay.mp4"
+    frame_count = 0
+    sim_step_index = 0
+    warned_control_failure = False
+    writer: cv2.VideoWriter | None = None
+
+    def export_frame(step_idx: int) -> None:
+        nonlocal frame_count, writer
+        scene.update_render()
+        rgb = _capture_camera_rgb_uint8(camera)
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        frame_path = output_dir / f"step_{step_idx:06d}.png"
+        ok = cv2.imwrite(str(frame_path), bgr)
+        if not ok:
+            raise RuntimeError(f"Failed to save frame: {frame_path}")
+        if writer is None:
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            writer = cv2.VideoWriter(str(video_path), fourcc, video_fps, (bgr.shape[1], bgr.shape[0]))
+            if not writer.isOpened():
+                raise RuntimeError(f"Failed to open video writer: {video_path}")
+        writer.write(bgr)
+        frame_count += 1
+
+    try:
+        export_frame(step_idx=0)
+        for sim_step_index in range(1, total_steps + 1):
+            q_target = joint_scripted_policy.query(sim_step_index)
+            if keyframe_replay_apply_mode == "direct":
+                ok = apply_joint_target_direct(robot=robot, target_qpos=q_target, physx_system=physx_system)
+            else:
+                ok = apply_joint_target(robot=robot, target_qpos=q_target, physx_system=physx_system)
+            if (not ok) and (not warned_control_failure):
+                print(
+                    "[Warn] Joint keyframe control failed on current backend during headless replay. "
+                    "Try `--cpu` for deterministic replay."
+                )
+                warned_control_failure = True
+
+            scene.step()
+            if is_gpu_backend:
+                physx_system.sync_poses_gpu_to_cpu()
+
+            if (sim_step_index % frame_interval_steps) == 0 or sim_step_index == total_steps:
+                export_frame(step_idx=sim_step_index)
+            if (sim_step_index % progress_interval) == 0 or sim_step_index == total_steps:
+                elapsed = max(1e-6, time.perf_counter() - start_ts)
+                pct = 100.0 * float(sim_step_index) / float(total_steps)
+                step_rate = float(sim_step_index) / elapsed
+                eta = max(0.0, float(total_steps - sim_step_index) / max(1e-6, step_rate))
+                print(
+                    "[Info] Headless replay progress: "
+                    f"step={sim_step_index}/{total_steps} ({pct:.1f}%), "
+                    f"frames={frame_count}, elapsed={elapsed:.1f}s, eta={eta:.1f}s"
+                )
+    finally:
+        if writer is not None:
+            writer.release()
+
+    meta = {
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "total_steps": int(total_steps),
+        "exported_frames": int(frame_count),
+        "frame_interval_steps": int(frame_interval_steps),
+        "video_fps": float(video_fps),
+        "camera_xyz": [float(x) for x in camera_xyz],
+        "camera_rpy": [float(x) for x in camera_rpy],
+        "camera_size": [int(camera_width), int(camera_height)],
+        "replay_apply_mode": str(keyframe_replay_apply_mode),
+        "video_path": str(video_path),
+    }
+    (output_dir / "replay_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[Info] Headless replay finished: frames={frame_count}, video={video_path}")
+
+
 class GranularExcavatorEnv:
     """ACT-style environment wrapper: action comes from outside, env only executes it."""
 
@@ -942,7 +1224,7 @@ class GranularExcavatorEnv:
             wall_height=POOL_WALL_HEIGHT,
             wall_thickness=POOL_WALL_THICKNESS,
             bottom_thickness=POOL_BOTTOM_THICKNESS,
-            base_color=(0.46, 0.56, 0.64, 1.0),
+            base_color=SOURCE_POOL_BASE_COLOR,
             name="source_particle_pool",
         )
         build_particle_pool(
@@ -952,7 +1234,7 @@ class GranularExcavatorEnv:
             wall_height=RECEIVER_POOL_WALL_HEIGHT,
             wall_thickness=POOL_WALL_THICKNESS,
             bottom_thickness=POOL_BOTTOM_THICKNESS,
-            base_color=(0.34, 0.62, 0.42, 1.0),
+            base_color=RECEIVER_POOL_BASE_COLOR,
             name="receiver_particle_pool",
         )
         self.particles = spawn_particles(
@@ -1169,6 +1451,29 @@ def main() -> None:
         default=KEYFRAME_REPLAY_APPLY_MODE,
         help="回放关节应用方式：direct=每步直接写qpos，drive=关节驱动跟踪（更物理）。",
     )
+    parser.add_argument(
+        "--headless-replay",
+        action="store_true",
+        help="后台回放（不打开UI），导出图片序列并自动生成视频（仅支持 mode=keyframe）。",
+    )
+    parser.add_argument(
+        "--frame-interval-steps",
+        type=int,
+        default=8,
+        help="后台回放导出图片间隔（单位：仿真步）。例如 10 表示每 10 step 导出 1 帧。",
+    )
+    parser.add_argument(
+        "--headless-output-dir",
+        type=str,
+        default=None,
+        help="后台回放输出目录。默认 outputs/headless_replay/<时间戳>/",
+    )
+    parser.add_argument(
+        "--headless-video-fps",
+        type=float,
+        default=30.0,
+        help="后台回放输出视频帧率。",
+    )
     args = parser.parse_args()
     config_path = Path(args.config).expanduser().resolve()
     pose_config = load_pose_config(config_path)
@@ -1189,7 +1494,7 @@ def main() -> None:
         wall_height=POOL_WALL_HEIGHT,
         wall_thickness=POOL_WALL_THICKNESS,
         bottom_thickness=POOL_BOTTOM_THICKNESS,
-        base_color=(0.46, 0.56, 0.64, 1.0),
+        base_color=SOURCE_POOL_BASE_COLOR,
         name="source_particle_pool",
     )
     build_particle_pool(
@@ -1199,7 +1504,7 @@ def main() -> None:
         wall_height=RECEIVER_POOL_WALL_HEIGHT,
         wall_thickness=POOL_WALL_THICKNESS,
         bottom_thickness=POOL_BOTTOM_THICKNESS,
-        base_color=(0.34, 0.62, 0.42, 1.0),
+        base_color=RECEIVER_POOL_BASE_COLOR,
         name="receiver_particle_pool",
     )
     particles = spawn_particles(
@@ -1280,6 +1585,44 @@ def main() -> None:
             print("[Info] Using built-in default joint keyframes.")
 
     maybe_init_gpu_physx(scene)
+    if args.mode == "keyframe" and SETTLE_PARTICLES_BEFORE_REPLAY:
+        print(
+            "[Info] Waiting particles to settle before keyframe replay... "
+            f"(min_steps={SETTLE_MIN_STEPS}, max_steps={SETTLE_MAX_STEPS})"
+        )
+        settle_particles_before_replay(
+            scene=scene,
+            particles=particles,
+            min_steps=SETTLE_MIN_STEPS,
+            max_steps=SETTLE_MAX_STEPS,
+            stable_window_steps=SETTLE_STABLE_WINDOW_STEPS,
+            mean_speed_threshold=SETTLE_MEAN_SPEED_THRESHOLD,
+            max_speed_threshold=SETTLE_MAX_SPEED_THRESHOLD,
+        )
+
+    if args.headless_replay:
+        if args.mode != "keyframe" or joint_scripted_policy is None:
+            raise ValueError("--headless-replay 仅支持 mode=keyframe 且需要可用 keyframe policy。")
+        if args.headless_output_dir:
+            output_dir = Path(args.headless_output_dir).expanduser().resolve()
+        else:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_dir = (REPO_ROOT / "outputs" / "headless_replay" / ts).resolve()
+        total_steps = int(np.ceil(float(joint_scripted_policy.period) * float(args.time_scale))) + 1
+        run_headless_keyframe_replay(
+            scene=scene,
+            robot=robot,
+            joint_scripted_policy=joint_scripted_policy,
+            keyframe_replay_apply_mode=args.replay_apply_mode,
+            output_dir=output_dir,
+            frame_interval_steps=max(1, int(args.frame_interval_steps)),
+            video_fps=float(args.headless_video_fps),
+            camera_xyz=CAMERA_XYZ,
+            camera_rpy=HEADLESS_CAMERA_RPY,
+            total_steps=total_steps,
+        )
+        return
+
     run_viewer(
         scene,
         camera_xyz=CAMERA_XYZ,

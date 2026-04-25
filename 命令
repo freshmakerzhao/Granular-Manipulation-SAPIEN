@@ -13,5 +13,10 @@ python run_env.py --entry scene --mode keyframe --keyframes-json configs/excavat
 # 回放（碰撞，且慢放，显示碰撞箱）
 python run_env.py --entry scene --mode keyframe --keyframes-json configs/excavator_s010_ee_keyframes.json --cpu --collision on  --time-scale 7.0 --replay-apply-mode drive --show-bucket-collision-boxes
 
+# 回放并录制视频
+python run_env.py --entry scene --mode keyframe \
+  --keyframes-json configs/excavator_s010_ee_keyframes.json \
+  --cpu --collision on --time-scale 7.0 --replay-apply-mode drive \
+  --headless-replay --frame-interval-steps 5 --headless-video-fps 15
 
 

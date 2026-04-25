@@ -18,6 +18,10 @@ from pathlib import Path
 import numpy as np
 import sapien
 from sapien.utils import Viewer
+try:
+    from transforms3d.euler import quat2euler
+except Exception:  # noqa: BLE001
+    quat2euler = None
 
 from envs import excavator_pool as env
 
@@ -104,6 +108,7 @@ def _run_capture_viewer(
     print("       F/H -> Swing 旋转 (J1-/+) | T/G -> Stick 伸缩 (J3-/+)")
     print("       I/K -> Boom 升降 (J2-/+) | J/L -> Bucket 开合 (J4-/+)")
     print("       9   -> 记录当前末端位姿为一个 keyframe")
+    print("       0   -> 打印当前相机 CAMERA_XYZ / CAMERA_RPY（便于拷贝到代码）")
     print("[Info] 若按键无响应，请先鼠标左键点击一次 3D 视窗以获取键盘焦点。")
     print(f"[Info] 录制文件: {record_file}")
     collision_enabled = collision_mode == "on"
@@ -118,6 +123,7 @@ def _run_capture_viewer(
     qlimits = np.asarray(robot.get_qlimits(), dtype=np.float32).reshape(-1, 2)
     unsupported_key_names: set[str] = set()
     prev_record_key_down = False
+    prev_dump_camera_key_down = False
     drive_target_q = np.asarray(robot.get_qpos(), dtype=np.float32).reshape(-1).copy()
     if collision_enabled:
         for joint, tgt in zip(robot.active_joints, drive_target_q, strict=False):
@@ -178,6 +184,47 @@ def _run_capture_viewer(
         print(
             f"[Info] 记录 keyframe #{kf_id}: t={t}, xyz={np.round(xyz, 4).tolist()}, "
             f"rpy={np.round(rpy, 4).tolist()}"
+        )
+
+    def print_current_camera_params() -> None:
+        try:
+            cam_p = np.asarray(viewer.window.get_camera_position(), dtype=np.float32).reshape(3)
+            cam_q = np.asarray(viewer.window.get_camera_rotation(), dtype=np.float32).reshape(4)
+            cam_pose = sapien.Pose(p=cam_p.tolist(), q=cam_q.tolist())
+        except Exception:  # noqa: BLE001
+            try:
+                cam_pose = viewer.window.get_camera_pose()
+                cam_p = np.asarray(cam_pose.p, dtype=np.float32).reshape(3)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[Warn] 无法读取当前相机参数: {exc}")
+                return
+
+        def _wrap_to_pi(v: float) -> float:
+            return float((v + np.pi) % (2.0 * np.pi) - np.pi)
+
+        if quat2euler is not None:
+            # Match SAPIEN viewer control convention exactly:
+            # control_window.py uses quat2euler(q) then setRPY(r, -p, -y).
+            r_raw, p_raw, y_raw = quat2euler(np.asarray(cam_pose.q, dtype=np.float64).reshape(4))
+            cam_rpy = np.asarray([r_raw, -p_raw, -y_raw], dtype=np.float32).reshape(3)
+        else:
+            # Fallback when transforms3d is unavailable.
+            pose_rpy = np.asarray(cam_pose.rpy, dtype=np.float32).reshape(3)
+            cam_rpy = np.asarray([pose_rpy[0], -pose_rpy[1], -pose_rpy[2]], dtype=np.float32).reshape(3)
+            print("[Warn] transforms3d 不可用，RPY 由 Pose.rpy 反推，可能存在欧拉角多解。")
+
+        # Canonicalize for direct backfill to CAMERA_RPY.
+        cam_rpy[0] = _wrap_to_pi(float(cam_rpy[0]))
+        cam_rpy[1] = float(np.clip(cam_rpy[1], -1.57, 1.57))  # viewer controller pitch clamp
+        cam_rpy[2] = _wrap_to_pi(float(cam_rpy[2]))
+        p = np.round(cam_p, 5).tolist()
+        r = np.round(cam_rpy, 5).tolist()
+        q = np.round(np.asarray(cam_pose.q, dtype=np.float32).reshape(4), 6).tolist()
+        print(
+            "[Info] 当前相机参数（可直接回填）:\n"
+            f"CAMERA_XYZ = ({p[0]}, {p[1]}, {p[2]})\n"
+            f"CAMERA_RPY = ({r[0]}, {r[1]}, {r[2]})\n"
+            f"# Raw camera quaternion (for debugging): CAMERA_Q = ({q[0]}, {q[1]}, {q[2]}, {q[3]})"
         )
 
     def apply_joint_delta_by_keyboard() -> bool:
@@ -247,6 +294,10 @@ def _run_capture_viewer(
         if record_key_down and (not prev_record_key_down):
             record_current_keyframe()
         prev_record_key_down = record_key_down
+        dump_camera_key_down = key_down_safe("0")
+        if dump_camera_key_down and (not prev_dump_camera_key_down):
+            print_current_camera_params()
+        prev_dump_camera_key_down = dump_camera_key_down
 
         if collision_enabled:
             # 未暂停时持续解算；暂停时若检测到按键，执行更多子步让位移可见。
@@ -378,7 +429,7 @@ def main() -> None:
         wall_height=env.POOL_WALL_HEIGHT,
         wall_thickness=env.POOL_WALL_THICKNESS,
         bottom_thickness=env.POOL_BOTTOM_THICKNESS,
-        base_color=(0.46, 0.56, 0.64, 1.0),
+        base_color=env.SOURCE_POOL_BASE_COLOR,
         name="source_particle_pool",
     )
     env.build_particle_pool(
@@ -388,7 +439,7 @@ def main() -> None:
         wall_height=env.RECEIVER_POOL_WALL_HEIGHT,
         wall_thickness=env.POOL_WALL_THICKNESS,
         bottom_thickness=env.POOL_BOTTOM_THICKNESS,
-        base_color=(0.34, 0.62, 0.42, 1.0),
+        base_color=env.RECEIVER_POOL_BASE_COLOR,
         name="receiver_particle_pool",
     )
     particles = env.spawn_particles(
