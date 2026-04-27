@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+from dataclasses import dataclass
 import json
 import sys
 from datetime import datetime
@@ -82,7 +83,7 @@ SIM_TIMESTEP = 1 / 240.0  # 物理仿真步长 (s)
 
 
 # ============================================= 颗粒 ============================================= 
-PARTICLE_COUNT = 5000  # 颗粒总数
+PARTICLE_COUNT = 4000  # 颗粒总数
 PARTICLE_RADIUS = 0.007  # 颗粒半径 (m)
 PARTICLE_RENDER_ENABLED = True  # 是否渲染颗粒（仅影响显示，不影响物理）
 
@@ -139,6 +140,20 @@ SETTLE_STABLE_WINDOW_STEPS = 60  # 需要连续满足阈值的步数
 SETTLE_MEAN_SPEED_THRESHOLD = 0.030  # 判稳阈值：颗粒平均线速度上限 (m/s)
 SETTLE_MAX_SPEED_THRESHOLD = 0.120  # 判稳阈值：颗粒最大线速度上限 (m/s)
 # ============================================= 回放前颗粒稳定等待 =============================================
+
+
+@dataclass
+class ExcavatorPoolWorld:
+    """Container for a fully constructed excavator + pool + particles scene."""
+
+    scene: sapien.Scene
+    robot: sapien.physx.PhysxArticulation
+    particles: list[sapien.Entity]
+    pose_config: dict[str, Any]
+    config_path: Path
+    urdf_path: Path
+    source_initial_count: int
+    bucket_collision_debug_visuals: list[tuple[sapien.Entity, Any, sapien.Pose]] | None = None
 
 
 def create_scene(timestep: float = 1 / 240.0, prefer_gpu: bool = True) -> sapien.Scene:
@@ -892,6 +907,102 @@ def update_bucket_collision_debug_visuals(
         actor.set_pose(link.entity_pose * local_pose)
 
 
+def create_excavator_pool_world(
+    equipment_model: str,
+    config_path: str | Path | None = None,
+    prefer_gpu: bool = True,
+    collision: str = "on",
+    bucket_collision_mode: str = "particle-only",
+    show_bucket_collision_boxes: bool = False,
+) -> ExcavatorPoolWorld:
+    """Build the full excavator + granular pool world with shared defaults."""
+    collision = str(collision).lower()
+    bucket_collision_mode = str(bucket_collision_mode).lower()
+    if collision not in {"on", "off"}:
+        raise ValueError(f"Invalid collision={collision}, expected 'on' or 'off'.")
+    if bucket_collision_mode not in {"particle-only", "all"}:
+        raise ValueError(
+            f"Invalid bucket_collision_mode={bucket_collision_mode}, expected 'particle-only' or 'all'."
+        )
+
+    resolved_config_path = (
+        Path(config_path).expanduser().resolve()
+        if config_path is not None
+        else DEFAULT_CONFIG_PATH.expanduser().resolve()
+    )
+    pose_config = load_pose_config(resolved_config_path)
+
+    scene = create_scene(timestep=SIM_TIMESTEP, prefer_gpu=bool(prefer_gpu))
+    configure_lighting(scene, ground_half_size=GROUND_HALF_SIZE)
+
+    build_platform(scene, center=PLATFORM_CENTER, half_size=PLATFORM_HALF_SIZE)
+    build_particle_pool(
+        scene,
+        center=POOL_CENTER,
+        inner_half_size=POOL_INNER_HALF_SIZE,
+        wall_height=POOL_WALL_HEIGHT,
+        wall_thickness=POOL_WALL_THICKNESS,
+        bottom_thickness=POOL_BOTTOM_THICKNESS,
+        base_color=SOURCE_POOL_BASE_COLOR,
+        name="source_particle_pool",
+    )
+    build_particle_pool(
+        scene,
+        center=RECEIVER_POOL_CENTER,
+        inner_half_size=RECEIVER_POOL_INNER_HALF_SIZE,
+        wall_height=RECEIVER_POOL_WALL_HEIGHT,
+        wall_thickness=POOL_WALL_THICKNESS,
+        bottom_thickness=POOL_BOTTOM_THICKNESS,
+        base_color=RECEIVER_POOL_BASE_COLOR,
+        name="receiver_particle_pool",
+    )
+    particles = spawn_particles(
+        scene,
+        center=POOL_CENTER,
+        inner_half_size=POOL_INNER_HALF_SIZE,
+        particle_count=PARTICLE_COUNT,
+        radius=PARTICLE_RADIUS,
+        render_particles=PARTICLE_RENDER_ENABLED,
+    )
+
+    urdf_path = resolve_excavator_urdf_path(pose_config, equipment_model, user_path=None)
+    init_qpos = get_initial_qpos_from_config(pose_config, equipment_model, SCENE_NAME)
+    print(f"[Info] Loading excavator URDF: {urdf_path}")
+    print(f"[Info] Loading pose config: {resolved_config_path}")
+    robot = load_excavator(
+        scene=scene,
+        equipment_model=equipment_model,
+        urdf_path=urdf_path,
+        platform_center=PLATFORM_CENTER,
+        platform_half_height=PLATFORM_HALF_SIZE[2],
+        init_qpos=init_qpos,
+    )
+
+    set_robot_and_particles_collision_enabled(robot, particles, enabled=(collision == "on"))
+    if collision == "on":
+        configure_bucket_particle_only_collision(
+            robot=robot,
+            particles=particles,
+            enabled=(bucket_collision_mode == "particle-only"),
+        )
+    bucket_collision_debug_visuals = (
+        create_bucket_collision_debug_visuals(scene, robot)
+        if bool(show_bucket_collision_boxes)
+        else None
+    )
+
+    return ExcavatorPoolWorld(
+        scene=scene,
+        robot=robot,
+        particles=particles,
+        pose_config=pose_config,
+        config_path=resolved_config_path,
+        urdf_path=urdf_path,
+        source_initial_count=len(particles),
+        bucket_collision_debug_visuals=bucket_collision_debug_visuals,
+    )
+
+
 def build_joint_policy_from_json(
     json_path: str | Path,
     dof: int,
@@ -1475,71 +1586,18 @@ def main() -> None:
         help="后台回放输出视频帧率。",
     )
     args = parser.parse_args()
-    config_path = Path(args.config).expanduser().resolve()
-    pose_config = load_pose_config(config_path)
-
-    scene = create_scene(timestep=SIM_TIMESTEP, prefer_gpu=not args.cpu)
-    configure_lighting(scene, ground_half_size=GROUND_HALF_SIZE)
-
-    platform_center = PLATFORM_CENTER
-    platform_half_size = PLATFORM_HALF_SIZE
-    build_platform(scene, center=platform_center, half_size=platform_half_size)
-
-    pool_center = POOL_CENTER
-    pool_inner_half_size = POOL_INNER_HALF_SIZE
-    build_particle_pool(
-        scene,
-        center=pool_center,
-        inner_half_size=pool_inner_half_size,
-        wall_height=POOL_WALL_HEIGHT,
-        wall_thickness=POOL_WALL_THICKNESS,
-        bottom_thickness=POOL_BOTTOM_THICKNESS,
-        base_color=SOURCE_POOL_BASE_COLOR,
-        name="source_particle_pool",
-    )
-    build_particle_pool(
-        scene,
-        center=RECEIVER_POOL_CENTER,
-        inner_half_size=RECEIVER_POOL_INNER_HALF_SIZE,
-        wall_height=RECEIVER_POOL_WALL_HEIGHT,
-        wall_thickness=POOL_WALL_THICKNESS,
-        bottom_thickness=POOL_BOTTOM_THICKNESS,
-        base_color=RECEIVER_POOL_BASE_COLOR,
-        name="receiver_particle_pool",
-    )
-    particles = spawn_particles(
-        scene,
-        center=pool_center,
-        inner_half_size=pool_inner_half_size,
-        particle_count=PARTICLE_COUNT,
-        radius=PARTICLE_RADIUS,
-        render_particles=PARTICLE_RENDER_ENABLED,
-    )
-
-    urdf_path = resolve_excavator_urdf_path(pose_config, args.equipment_model, user_path=None)
-    init_qpos = get_initial_qpos_from_config(pose_config, args.equipment_model, SCENE_NAME)
-    print(f"[Info] Loading excavator URDF: {urdf_path}")
-    print(f"[Info] Loading pose config: {config_path}")
-    robot = load_excavator(
-        scene=scene,
+    world = create_excavator_pool_world(
         equipment_model=args.equipment_model,
-        urdf_path=urdf_path,
-        platform_center=platform_center,
-        platform_half_height=platform_half_size[2],
-        init_qpos=init_qpos,
+        config_path=args.config,
+        prefer_gpu=not args.cpu,
+        collision=args.collision,
+        bucket_collision_mode=args.bucket_collision_mode,
+        show_bucket_collision_boxes=args.show_bucket_collision_boxes,
     )
-    set_robot_and_particles_collision_enabled(robot, particles, enabled=(args.collision == "on"))
-    if args.collision == "on":
-        configure_bucket_particle_only_collision(
-            robot,
-            particles,
-            enabled=(args.bucket_collision_mode == "particle-only"),
-        )
-    bucket_collision_debug_visuals = (
-        create_bucket_collision_debug_visuals(scene, robot)
-        if args.show_bucket_collision_boxes
-        else None
-    )
+    scene = world.scene
+    robot = world.robot
+    particles = world.particles
+    bucket_collision_debug_visuals = world.bucket_collision_debug_visuals
 
     joint_scripted_policy: LinearJointKeyframePolicy | None = None
 

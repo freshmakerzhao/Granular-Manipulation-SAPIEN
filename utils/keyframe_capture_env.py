@@ -320,44 +320,6 @@ def _run_capture_viewer(
         viewer.render()
 
 
-def _set_entity_collision_enabled(entity: sapien.Entity, enabled: bool) -> int:
-    """Enable/disable collisions for one entity by setting all shape groups."""
-    if enabled:
-        return 0
-
-    component: sapien.physx.PhysxRigidBaseComponent | None = entity.find_component_by_type(
-        sapien.physx.PhysxRigidDynamicComponent
-    )
-    if component is None:
-        component = entity.find_component_by_type(sapien.physx.PhysxArticulationLinkComponent)
-    if component is None:
-        return 0
-
-    changed = 0
-    for shape in component.collision_shapes:
-        shape.set_collision_groups([0, 0, 0, 0])
-        changed += 1
-    return changed
-
-
-def _set_robot_and_particles_collision(
-    robot: sapien.physx.PhysxArticulation,
-    particles: list[sapien.Entity],
-    enabled: bool,
-) -> None:
-    """Unified collision switch for robot + particles."""
-    if enabled:
-        print("[Info] Collision mode: ON (robot + particles).")
-        return
-
-    changed_shapes = 0
-    for link in robot.links:
-        changed_shapes += _set_entity_collision_enabled(link.entity, enabled=False)
-    for particle in particles:
-        changed_shapes += _set_entity_collision_enabled(particle, enabled=False)
-    print(f"[Info] Collision mode: OFF (robot + particles), disabled shapes={changed_shapes}.")
-
-
 def main() -> None:
     bootstrap_config_path = env.extract_config_path_from_argv(sys.argv[1:], env.DEFAULT_CONFIG_PATH)
     bootstrap_config = env.load_pose_config(bootstrap_config_path)
@@ -415,65 +377,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    config_path = Path(args.config).expanduser().resolve()
-    pose_config = env.load_pose_config(config_path)
-
-    scene = env.create_scene(timestep=env.SIM_TIMESTEP, prefer_gpu=args.gpu)
-    env.configure_lighting(scene, ground_half_size=env.GROUND_HALF_SIZE)
-
-    env.build_platform(scene, center=env.PLATFORM_CENTER, half_size=env.PLATFORM_HALF_SIZE)
-    env.build_particle_pool(
-        scene,
-        center=env.POOL_CENTER,
-        inner_half_size=env.POOL_INNER_HALF_SIZE,
-        wall_height=env.POOL_WALL_HEIGHT,
-        wall_thickness=env.POOL_WALL_THICKNESS,
-        bottom_thickness=env.POOL_BOTTOM_THICKNESS,
-        base_color=env.SOURCE_POOL_BASE_COLOR,
-        name="source_particle_pool",
-    )
-    env.build_particle_pool(
-        scene,
-        center=env.RECEIVER_POOL_CENTER,
-        inner_half_size=env.RECEIVER_POOL_INNER_HALF_SIZE,
-        wall_height=env.RECEIVER_POOL_WALL_HEIGHT,
-        wall_thickness=env.POOL_WALL_THICKNESS,
-        bottom_thickness=env.POOL_BOTTOM_THICKNESS,
-        base_color=env.RECEIVER_POOL_BASE_COLOR,
-        name="receiver_particle_pool",
-    )
-    particles = env.spawn_particles(
-        scene,
-        center=env.POOL_CENTER,
-        inner_half_size=env.POOL_INNER_HALF_SIZE,
-        particle_count=env.PARTICLE_COUNT,
-        radius=env.PARTICLE_RADIUS,
-        render_particles=env.PARTICLE_RENDER_ENABLED,
-    )
-
-    urdf_path = env.resolve_excavator_urdf_path(pose_config, args.equipment_model, user_path=None)
-    init_qpos = env.get_initial_qpos_from_config(pose_config, args.equipment_model, env.SCENE_NAME)
-
-    robot = env.load_excavator(
-        scene=scene,
+    world = env.create_excavator_pool_world(
         equipment_model=args.equipment_model,
-        urdf_path=urdf_path,
-        platform_center=env.PLATFORM_CENTER,
-        platform_half_height=env.PLATFORM_HALF_SIZE[2],
-        init_qpos=init_qpos,
+        config_path=args.config,
+        prefer_gpu=args.gpu,
+        collision=args.collision,
+        bucket_collision_mode="particle-only",
+        show_bucket_collision_boxes=args.show_bucket_collision_boxes,
     )
-    env.configure_bucket_particle_only_collision(robot, particles)
-    bucket_collision_debug_visuals = (
-        env.create_bucket_collision_debug_visuals(scene, robot)
-        if args.show_bucket_collision_boxes
-        else None
-    )
-
-    _set_robot_and_particles_collision(
-        robot=robot,
-        particles=particles,
-        enabled=(args.collision == "on"),
-    )
+    scene = world.scene
+    robot = world.robot
+    bucket_collision_debug_visuals = world.bucket_collision_debug_visuals
     _apply_capture_dynamics(robot)
     env.maybe_init_gpu_physx(scene)
     _run_capture_viewer(

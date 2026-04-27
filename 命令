@@ -1,22 +1,45 @@
-# 采集（不开碰撞）
-python run_env.py --entry capture --record-file configs/excavator_s010_ee_keyframes.json --keyframe-t-interval 40 --collision off
+# 帮助
+python run_env.py --help
 
-# 采集（开碰撞）
-python run_env.py --entry capture --record-file configs/excavator_s010_ee_keyframes.json --keyframe-t-interval 40 --collision on
+# 录制（不带碰撞）
+python run_env.py --entry capture \
+  --record-file configs/excavator_s010_ee_keyframes.json \
+  --keyframe-t-interval 40 \
+  --collision off
+
+# 录制（带碰撞）
+python run_env.py --entry capture \
+  --record-file configs/excavator_s010_ee_keyframes.json \
+  --keyframe-t-interval 40 \
+  --collision on
 
 # 回放（不开碰撞）
-python run_env.py --entry scene --mode keyframe --keyframes-json configs/excavator_s010_ee_keyframes.json --cpu
-
-# 回放（开碰撞，且慢放）
-python run_env.py --entry scene --mode keyframe --keyframes-json configs/excavator_s010_ee_keyframes.json --cpu --collision on  --time-scale 7.0 --replay-apply-mode drive
-
-# 回放（碰撞，且慢放，显示碰撞箱）
-python run_env.py --entry scene --mode keyframe --keyframes-json configs/excavator_s010_ee_keyframes.json --cpu --collision on  --time-scale 7.0 --replay-apply-mode drive --show-bucket-collision-boxes
-
-# 回放并录制视频
-python run_env.py --entry scene --mode keyframe \
+python run_env.py --entry scene \
+  --mode keyframe \
   --keyframes-json configs/excavator_s010_ee_keyframes.json \
-  --cpu --collision on --time-scale 7.0 --replay-apply-mode drive \
-  --headless-replay --frame-interval-steps 5 --headless-video-fps 15
+  --cpu --collision on \
+  --time-scale 7.0 \
+  --replay-apply-mode drive
+
+# 回放（开碰撞，生成图片视频，后台运行）
+python run_env.py --entry scene \
+  --mode keyframe \
+  --keyframes-json configs/excavator_s010_ee_keyframes.json \
+  --cpu --collision on \
+  --time-scale 7.0 \
+  --replay-apply-mode drive \
+  --headless-replay \
+  --frame-interval-steps 5 \
+  --headless-video-fps 15
 
 
+# 回放（并采集建图数据）
+python run_env.py --entry collect excavator_s010 \
+  --keyframes-json configs/excavator_s010_ee_keyframes.json \
+  --cpu --collision on \
+  --replay-apply-mode drive \
+  --sample-interval-steps 10 \
+  --output outputs/mapping_rollouts/my_run_hdf5
+
+# 检查
+python run_env.py --entry inspect outputs/mapping_rollouts/my_run_hdf5/rollout_data.hdf5
